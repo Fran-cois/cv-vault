@@ -12,7 +12,7 @@ struct ExportsView: View {
     @State private var loadedSourceID: String?
     @State private var loading = false
     @State private var language = CVLanguage.fr
-    @State private var template = CVTemplate.editorial
+    @State private var template = CVTemplate.source
     @State private var paper = CVPaper.a4
     @State private var title = ""
     @State private var filename = ""
@@ -87,6 +87,11 @@ struct ExportsView: View {
         VStack(alignment: .leading, spacing: 13) {
             SectionTitle(title: "Nouvel export", symbol: "doc.badge.plus")
             templatePicker
+            if template == .source {
+                Text("Le style Original reprend la typographie et la mise en page du PDF sélectionné.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
 
             Divider()
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
@@ -103,13 +108,17 @@ struct ExportsView: View {
                 }
                 GridRow {
                     Text("Format").foregroundStyle(.secondary)
-                    Picker("Format papier", selection: $paper) {
-                        Text("A4").tag(CVPaper.a4)
-                        Text("US Letter").tag(CVPaper.letter)
+                    if template == .source {
+                        Text("Format du PDF source")
+                    } else {
+                        Picker("Format papier", selection: $paper) {
+                            Text("A4").tag(CVPaper.a4)
+                            Text("US Letter").tag(CVPaper.letter)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 180)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 180)
                 }
                 GridRow {
                     Text("Langue").foregroundStyle(.secondary)
@@ -322,7 +331,7 @@ struct ExportsView: View {
         request = RenderRequest(
             sourceID: sourceID,
             factIDs: availableFacts.filter { selectedIDs.contains($0.id) }.map(\.id),
-            language: language, template: template, paper: paper, title: title,
+            language: language, template: template, paper: template == .source ? nil : paper, title: title,
             name: name.isEmpty ? proposedName : name, output: output
         )
     }
@@ -385,7 +394,7 @@ struct ExportsView: View {
         let factIDs: [String]
         let language: CVLanguage
         let template: CVTemplate
-        let paper: CVPaper
+        let paper: CVPaper?
         let title: String
         let name: String
         let output: Output
@@ -401,7 +410,22 @@ struct ExportsView: View {
                 }
                 facts.append(contentsOf: batch)
             }
-            let typst = try CVExporter.generate(facts: facts, language: language, title: title, template: template, paper: paper)
+            let sourceStyle: CVSourceStyle?
+            if template == .source {
+                guard let pdf = try database.originalPDF(sourceID: sourceID) else {
+                    throw OriginalStyleError.missingPDF
+                }
+                do {
+                    sourceStyle = try CVSourceStyle.analyze(pdf: pdf)
+                } catch CVSourceStyleError.unavailable {
+                    throw OriginalStyleError.unmeasurable
+                }
+            } else {
+                sourceStyle = nil
+            }
+            let typst = try CVExporter.generate(
+                facts: facts, language: language, title: title, template: template, paper: paper, sourceStyle: sourceStyle
+            )
             switch output {
             case .typst: return .saved(try CVExporter.save(typst: typst, name: name))
             case .pdf: return .preview(try TypstPDFCompiler.compile(typst))
@@ -412,6 +436,20 @@ struct ExportsView: View {
     private struct SelectionChanged: LocalizedError {
         var errorDescription: String? {
             "Les faits sélectionnés ont changé. Actualisez la base, puis réessayez."
+        }
+    }
+
+    private enum OriginalStyleError: LocalizedError {
+        case missingPDF
+        case unmeasurable
+
+        var errorDescription: String? {
+            switch self {
+            case .missingPDF:
+                "Le PDF source est introuvable. Importez-le pour retrouver son style."
+            case .unmeasurable:
+                "Le style de ce PDF n’a pas pu être mesuré. Sélectionnez un autre style pour l’export."
+            }
         }
     }
 }
@@ -489,6 +527,7 @@ private struct TemplateChoice: View {
 
     private var accent: Color {
         switch template {
+        case .source: VaultStyle.accent
         case .editorial: Color(red: 0.08, green: 0.29, blue: 0.36)
         case .classic: Color(white: 0.16)
         case .minimal: Color(red: 0.21, green: 0.24, blue: 0.27)
@@ -499,6 +538,7 @@ private struct TemplateChoice: View {
 
     private var caption: String {
         switch template {
+        case .source: "D’après le PDF source"
         case .editorial: "Titres accentués"
         case .classic: "Noir et blanc"
         case .minimal: "Sans empattement"

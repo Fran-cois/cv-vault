@@ -15,7 +15,7 @@ struct CVTools {
     private static let maxPages = 10
     private static let maxFacts = 50
     private static let maxFactIDs = 100
-    private static let defaultTemplate = CVTemplate.editorial
+    private static let defaultTemplate = CVTemplate.source
     private static let categories = FactCategory.allCases.map(\.rawValue)
     private static let bodyCategories = FactCategory.allCases.filter { $0 != .identity && $0 != .contact }.map(\.rawValue)
     private static let statuses = FactStatus.allCases.map(\.rawValue) + ["all"]
@@ -77,7 +77,7 @@ struct CVTools {
         ),
         tool(
             "list_cv_styles", title: "List CV styles",
-            description: "Compare the available CV styles and get their template IDs for generate_cv.",
+            description: "List template IDs for generate_cv. The default, source, takes its style from the imported PDF.",
             properties: [
                 "language": [
                     "type": "string", "enum": CVLanguage.allCases.map(\.rawValue), "default": CVLanguage.fr.rawValue,
@@ -90,8 +90,8 @@ struct CVTools {
             description: """
             Compose a professional, standalone .typ résumé from verified facts in one PDF. Select relevant facts
             with search_facts. Optionally use sections to group jobs, degrees, and projects with their original
-            dates and achievements. Supply every selected ID in fact_ids; identity and contact facts appear in
-            the header automatically. Provide filename to save; omit it to return Typst source only.
+            dates and achievements. Supply every selected ID in fact_ids. The default source template uses the
+            original PDF's visual style. Provide filename to save, or omit it to return Typst source only.
             """,
             properties: [
                 "fact_ids": factIDArray("All selected facts in display order if sections is omitted.", required: true),
@@ -102,11 +102,11 @@ struct CVTools {
                 "template": [
                     "type": "string", "enum": CVTemplate.allCases.map(\.rawValue),
                     "default": defaultTemplate.rawValue,
-                    "description": "Visual style ID from list_cv_styles. Use the same fact IDs and a different filename to create another style."
+                    "description": "Visual style ID from list_cv_styles. The source style derives its layout and typography from the original PDF."
                 ],
                 "paper": [
                     "type": "string", "enum": CVPaper.allCases.map(\.rawValue),
-                    "description": "a4 (default) or letter."
+                    "description": "Override the page size with a4 or letter. If omitted, source uses the original PDF dimensions and the other styles use a4."
                 ],
                 "sections": [
                     "type": "array", "maxItems": bodyCategories.count, "items": sectionSchema,
@@ -240,7 +240,11 @@ struct CVTools {
         let ids = try Self.readFactIDs(args, "fact_ids", required: true)
         let language = try Self.readChoice(args, "language", default: CVLanguage.fr)
         let template = try Self.readChoice(args, "template", default: Self.defaultTemplate)
-        let paper = try Self.readChoice(args, "paper", default: CVPaper.a4)
+        let paper: CVPaper? = if args["paper"] == nil && template == .source {
+            nil
+        } else {
+            try Self.readChoice(args, "paper", default: CVPaper.a4)
+        }
         let sections = try Self.readSections(args, available: Set(ids))
         var labels: [FactCategory: String] = [:]
         if let raw = args["section_labels"] {
@@ -268,13 +272,22 @@ struct CVTools {
             throw ToolArgumentError("Select verified facts. Review pending facts in the macOS app.")
         }
 
+        let sourceStyle: CVSourceStyle?
+        if template == .source {
+            guard let original = try base.originalPDF(sourceID: sourceID) else {
+                throw ToolArgumentError("The original PDF is unavailable. Choose another style with list_cv_styles.")
+            }
+            sourceStyle = try CVSourceStyle.analyze(pdf: original)
+        } else {
+            sourceStyle = nil
+        }
         let typst = try CVExporter.generate(
             facts: facts, labels: labels, language: language, title: title,
-            template: template, paper: paper, sections: sections
+            template: template, paper: paper, sections: sections, sourceStyle: sourceStyle
         )
         var reply: [String: Any] = [
             "typst": typst, "source_id": sourceID, "fact_ids": ids,
-            "template": template.rawValue, "paper": paper.rawValue
+            "template": template.rawValue, "paper": paper?.rawValue ?? "source"
         ]
         if let filename {
             reply["path"] = try CVExporter.save(typst: typst, name: filename).path

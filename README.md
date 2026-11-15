@@ -1,6 +1,6 @@
 # CV Vault
 
-App macOS native pour transformer un CV PDF en base de connaissances locale, explorer ses faits en graphe et composer des CV Typst avec Codex.
+App macOS native pour transformer un CV PDF en base de connaissances locale, explorer ses faits en graphe et composer des CV Typst avec Codex dans le style du document importé.
 
 **Importer un PDF → explorer et vérifier les faits → composer un CV → exporter en Typst ou PDF.**
 
@@ -23,9 +23,9 @@ L’archive du projet n’est pas notariée par Apple. Si macOS bloque son ouver
 1. Cliquez sur **Importer un PDF** et sélectionnez votre CV.
 2. Dans **Faits**, comparez les propositions au texte source. Corrigez le texte ou la catégorie, puis vérifiez ou écartez les éléments. Les faits vérifiés restent reliés à leur page et à leur extrait d’origine.
 3. Ouvrez **Graphe des faits** pour parcourir les liens entre PDF, rubriques et faits. Zoomez ou filtrez par source, rubrique ou statut, puis sélectionnez un fait pour lire son texte, son extrait d’origine et ouvrir la page correspondante.
-4. Dans **CV Typst**, sélectionnez vos faits vérifiés, un des cinq styles et le format A4 ou US Letter. Exportez un fichier `.typ` autonome et modifiable. Avec [Typst](https://github.com/typst/typst) installé, vous pouvez également prévisualiser le CV, vérifier son nombre de pages et enregistrer le PDF dans l’app.
+4. Dans **CV Typst**, sélectionnez vos faits vérifiés. Le style **Original** reprend la taille de page, les marges, la typographie, les couleurs et les colonnes détectées dans le PDF. Vous pouvez aussi sélectionner un modèle et choisir son format. Exportez un fichier `.typ` modifiable ou prévisualisez et enregistrez le PDF avec [Typst](https://github.com/typst/typst).
 
-Comparez les cinq styles sur le même CV fictif. [Aperçu PDF](https://github.com/Fran-cois/cv-vault/releases/download/v0.4.0/Apercu-styles-CV-Vault.pdf)
+Comparez les cinq modèles sur le même CV fictif. [Aperçu PDF](https://github.com/Fran-cois/cv-vault/releases/download/v0.4.0/Apercu-styles-CV-Vault.pdf)
 
 L’import s’appuie sur la position du texte dans le PDF pour lire les colonnes et rattacher les retours à la ligne au bon fait. Les pages scannées passent par la reconnaissance locale de Vision. L’app conserve le PDF original, le texte brut par page et les liens détectés. Consultez l’extrait de chaque fait avant de le valider, surtout si la mise en page est complexe ou le scan de mauvaise qualité. Chaque PDF est limité à 50 Mio et 100 pages.
 
@@ -42,7 +42,7 @@ codex mcp get cv-vault
 
 Le serveur s’exécute en local sur STDIO, même quand l’app est fermée. Après l’ajout, ouvrez une nouvelle session Codex ou redémarrez le client s’il ne voit pas le serveur. Vous pouvez aussi l’ajouter dans les réglages MCP de l’app Codex en choisissant STDIO et en indiquant le chemin complet du binaire. Voir la [documentation Codex sur les serveurs MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
-> Avec CV Vault, liste les styles disponibles puis crée le même CV Lead Data en styles Technique et Direction. Utilise les mêmes faits vérifiés et le format A4. Sauvegarde les deux fichiers sous des noms distincts.
+> Avec CV Vault, crée une version de mon CV pour un poste de Lead Data avec les faits vérifiés. Garde le style et le format du PDF importé.
 
 | Outil MCP | Usage |
 | --- | --- |
@@ -56,7 +56,8 @@ Passez l’identifiant du style dans `generate_cv.template`.
 
 | Identifiant | Style | Présentation |
 | --- | --- | --- |
-| `editorial` | Éditorial (par défaut) | Titres bleu pétrole et typographie à empattements. |
+| `source` | Original (par défaut) | Mise en page et attributs mesurés dans le PDF de la source. |
+| `editorial` | Éditorial | Titres bleu pétrole et typographie à empattements. |
 | `classic` | Classique | En-tête centré et texte monochrome. |
 | `minimal` | Minimaliste | Lignes sobres et typographie compacte sans empattements. |
 | `executive` | Direction | Typographie à empattements et en-tête bleu marine. |
@@ -64,7 +65,9 @@ Passez l’identifiant du style dans `generate_cv.template`.
 
 Pour structurer un CV via MCP, passez `fact_ids` et une liste ordonnée `sections`. Dans une expérience, une formation ou un projet, une entrée peut référencer `heading_fact_id`, `metadata_fact_ids` et `bullet_fact_ids`. Chaque fait de corps sélectionné doit être utilisé une seule fois, dans sa rubrique. Les faits d’identité et de contact vont dans l’en-tête.
 
-Les formats sont `a4` et `letter`. Le choix `fr` ou `en` règle les titres de rubrique et la typographie. Le texte des faits reste dans sa langue d’origine. La validation et la modification des faits se font dans l’app.
+Avec `source`, omettez `paper` pour conserver la taille du PDF. Les valeurs `a4` et `letter` imposent un format. Le rendu Original est une recomposition éditable qui s’adapte à la longueur du contenu. Typst utilise la police du PDF quand elle est disponible localement. Pour un PDF scanné dont le style du texte ne peut pas être mesuré, choisissez l’un des cinq modèles.
+
+Le choix `fr` ou `en` règle la langue du rendu. Le texte des faits reste dans sa langue d’origine. La validation et la modification des faits se font dans l’app.
 
 ## Données locales
 

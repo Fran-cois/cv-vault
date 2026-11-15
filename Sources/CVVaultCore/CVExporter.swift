@@ -13,6 +13,7 @@ public enum CVExportError: LocalizedError {
     case invalidName
     case fileExists
     case invalidDirectory
+    case missingSourceStyle
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +24,7 @@ public enum CVExportError: LocalizedError {
         case .invalidName: return "Use a short file name with letters, numbers, spaces, hyphens or underscores."
         case .fileExists: return "A CV with that name already exists. Choose a different name."
         case .invalidDirectory: return "The export directory must be a local directory and cannot be a symbolic link."
+        case .missingSourceStyle: return "Original style requires the appearance of the imported PDF."
         }
     }
 }
@@ -39,8 +41,9 @@ public enum CVExporter {
         language: CVLanguage = .fr,
         title: String? = nil,
         template: CVTemplate = .editorial,
-        paper: CVPaper = .a4,
-        sections: [CVSection]? = nil
+        paper: CVPaper? = nil,
+        sections: [CVSection]? = nil,
+        sourceStyle: CVSourceStyle? = nil
     ) throws -> String {
         guard !facts.isEmpty,
               facts.allSatisfy({ !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
@@ -52,7 +55,7 @@ public enum CVExporter {
 
         return try CVLayout.render(
             facts: facts, labels: labels, language: language, title: title,
-            template: template, paper: paper, composition: sections
+            template: template, paper: paper, composition: sections, sourceStyle: sourceStyle
         )
     }
 

@@ -47,14 +47,14 @@ struct CodexView: View {
                     Divider().padding(.leading, 49)
                     toolRow("list_cv_styles", "Comparer les styles disponibles", symbol: "square.grid.2x2")
                     Divider().padding(.leading, 49)
-                    toolRow("generate_cv", "Composer un CV Typst avec le modèle et les rubriques choisis", symbol: "arrow.down.doc")
+                    toolRow("generate_cv", "Composer un CV Typst dans le style du PDF source ou dans un autre style choisi", symbol: "arrow.down.doc")
                 }
                 .vaultPanel()
             }
 
             VStack(alignment: .leading, spacing: 10) {
                 SectionTitle(title: "À essayer dans Codex", symbol: "text.bubble")
-                codeBlock("Liste les styles CV Vault, puis génère le même CV français pour [poste] en styles Minimaliste et Direction. Garde les mêmes faits validés dans les deux versions et enregistre-les en cv-minimaliste.typ et cv-direction.typ.", key: "prompt", monospace: false)
+                codeBlock("Génère un CV pour [poste] avec les faits validés de mon CV FR. Reprends le style Original du PDF source et enregistre le résultat en cv-fr-original.typ.", key: "prompt", monospace: false)
             }
         }
         .task(id: copied) {

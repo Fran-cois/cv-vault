@@ -1,10 +1,12 @@
 import Foundation
 
 public enum CVTemplate: String, CaseIterable, Codable, Sendable {
-    case editorial, classic, minimal, executive, technical
+    case source, editorial, classic, minimal, executive, technical
 
     public func displayName(language: CVLanguage) -> String {
         switch (self, language) {
+        case (.source, .fr): "Original"
+        case (.source, .en): "Original"
         case (.editorial, .fr): "Éditorial"
         case (.editorial, .en): "Editorial"
         case (.classic, .fr): "Classique"
@@ -20,6 +22,10 @@ public enum CVTemplate: String, CaseIterable, Codable, Sendable {
 
     public func description(language: CVLanguage) -> String {
         switch (self, language) {
+        case (.source, .fr):
+            "Reprend les dimensions, la typographie, les couleurs et les colonnes détectées dans le PDF."
+        case (.source, .en):
+            "Reuses the page dimensions, typography, colors, and columns detected in the imported PDF."
         case (.editorial, .fr):
             "Grand nom aligné à gauche, corps à empattements et titres bleu pétrole."
         case (.editorial, .en):

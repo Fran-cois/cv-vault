@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 
-STYLES = ("editorial", "classic", "minimal", "executive", "technical")
+STYLES = ("source", "editorial", "classic", "minimal", "executive", "technical")
 
 
 def write_cv_pdf(path, name):
@@ -142,14 +142,15 @@ def run(binary, temp):
         assert tools.keys() == {"list_sources", "get_source", "search_facts", "list_cv_styles", "generate_cv"}
         selection = tools["generate_cv"]["inputSchema"]["properties"]["template"]
         assert set(selection["enum"]) == set(STYLES), selection
-        assert client.tool("list_cv_styles")["default_style"] == "editorial"
+        assert selection["default"] == "source", selection
+        assert client.tool("list_cv_styles")["default_style"] == "source"
         for language in ("fr", "en"):
             listing = client.tool("list_cv_styles", language=language)
             styles = listing["styles"]
             assert len(styles) == len(STYLES) and {style["id"] for style in styles} == set(STYLES), listing
             assert all(style["name"].strip() and style["description"].strip() for style in styles), listing
-            assert listing["default_style"] == "editorial", listing
-            assert [style["id"] for style in styles if style["default"]] == ["editorial"], listing
+            assert listing["default_style"] == "source", listing
+            assert [style["id"] for style in styles if style["default"]] == ["source"], listing
         client.tool("list_cv_styles", language="unsupported", error="language")
         first = client.tool("list_sources", limit=1)
         second = client.tool("list_sources", limit=1, offset=first["next_offset"])
@@ -193,21 +194,28 @@ def run(binary, temp):
             "title": "Platform Engineer",
             "section_labels": {"experience": "Selected work"},
         }
-        preview = client.tool("generate_cv", **arguments)
+        preview = client.tool("generate_cv", **arguments, template="editorial")
         assert "path" not in preview and not (vault / "Exports").exists(), preview
         assert preview["source_id"] == source_id and preview["fact_ids"] == visible_ids
         assert preview["typst"].index("Swift, SQLite, Typst") < preview["typst"].index("Selected work")
         assert preview["template"] == "editorial" and preview["paper"] == "a4"
-        assert client.tool("generate_cv", **arguments, template="editorial") == preview
+        source_preview = client.tool("generate_cv", **arguments)
+        assert source_preview["template"] == "source" and source_preview["paper"] == "source"
+        assert source_preview["fact_ids"] == visible_ids and source_preview["source_id"] == source_id
+        assert client.tool("generate_cv", **arguments, template="source") == source_preview
+        assert source_preview["typst"] != preview["typst"]
+        source_override = client.tool("generate_cv", **arguments, paper="a4")
+        assert (source_override["template"], source_override["paper"]) == ("source", "a4")
+        assert source_override["typst"] != source_preview["typst"]
 
         client.tool("generate_cv", **arguments, filename="../escape.typ", error="file name")
         assert not (vault / "escape.typ").exists()
         saved = client.tool("generate_cv", **arguments, filename="smoke.typ")
         path = Path(saved["path"])
         assert path == vault / "Exports" / "smoke.typ"
-        assert path.read_text() == preview["typst"] and path.stat().st_mode & 0o777 == 0o600
+        assert path.read_text() == source_preview["typst"] and path.stat().st_mode & 0o777 == 0o600
         client.tool("generate_cv", **arguments, filename="smoke.typ", error="already exists")
-        assert path.read_text() == preview["typst"]
+        assert path.read_text() == source_preview["typst"]
 
         grouped_arguments = {
             "fact_ids": [identity["id"], skills["id"], role["id"], dates["id"], experience["id"]],
@@ -269,6 +277,10 @@ def run(binary, temp):
                 )
                 assert result.returncode == 0, result.stderr
                 assert compiled.read_bytes().startswith(b"%PDF")
+                if source == path and (pdfinfo := shutil.which("pdfinfo")):
+                    info = subprocess.check_output([pdfinfo, str(compiled)], text=True, timeout=10)
+                    size = next(line for line in info.splitlines() if line.startswith("Page size:")).split()
+                    assert float(size[2]) == 612 and float(size[4]) == 792, info
                 if pdftotext:
                     document = subprocess.check_output([pdftotext, str(compiled), "-"], text=True, timeout=10)
                     text = " ".join(document.split())

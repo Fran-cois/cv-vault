@@ -13,8 +13,15 @@ enum CVLayout {
 
     static func render(
         facts: [CVFact], labels: [FactCategory: String], language: CVLanguage, title: String?,
-        template: CVTemplate, paper: CVPaper, composition: [CVSection]?
+        template: CVTemplate, paper: CVPaper?, composition: [CVSection]?, sourceStyle: CVSourceStyle?
     ) throws -> String {
+        let appearance: CVSourceStyle?
+        if template == .source {
+            guard let sourceStyle else { throw CVExportError.missingSourceStyle }
+            appearance = sourceStyle
+        } else {
+            appearance = nil
+        }
         let rows = try composition.map { try resolve($0, facts: facts) } ?? defaultSections(facts)
         let nameAndIdentity = distinct(facts.filter { $0.category == .identity }.map(\.text))
         let candidateName = nameAndIdentity.first
@@ -24,7 +31,8 @@ enum CVLayout {
         let contacts = distinct(facts.filter { $0.category == .contact }.map(\.text))
         let metadataTitle = distinct([candidateName, role].compactMap { $0 }).joined(separator: " — ")
 
-        var output = [preamble(template: template, language: language, paper: paper)]
+        var output = [appearance.map { CVSourceLayout.preamble($0, language: language, paper: paper) }
+            ?? preamble(template: template, language: language, paper: paper ?? .a4)]
         let author = candidateName.map { ", author: " + tuple([$0]) } ?? ""
         output.append("#set document(title: \(literal(metadataTitle.nonBlank ?? "CV"))\(author))")
         output.append("")
@@ -39,31 +47,64 @@ enum CVLayout {
         }
         output.append("#cv-header-rule()")
 
-        for section in rows {
-            let heading = labels[section.category]?.nonBlank ?? CVExporter.sectionTitle(section.category, language)
+        let sectionLines = { (section: Section) in render(section, labels: labels, language: language, appearance: appearance) }
+        let tail = rows.reversed().prefix { footerCategories.contains($0.category) }.reversed()
+        if let ratio = appearance?.sidebarRatio,
+           tail.contains(where: { $0.category == .projects }),
+           tail.contains(where: { $0.category != .projects }) {
+            output += rows.dropLast(tail.count).flatMap(sectionLines)
+            let primary = tail.filter { $0.category != .projects }.flatMap(sectionLines).joined(separator: "\n")
+            let secondary = tail.filter { $0.category == .projects }.flatMap(sectionLines).joined(separator: "\n")
             output.append("")
-            output.append("#cv-section(\(literal(heading)))")
-            for row in section.rows {
-                switch row {
-                case .fact(let content):
-                    switch section.category {
-                    case .summary:
-                        output.append("#par(\(literal(content)))")
-                    case .skills, .languages:
-                        output.append("#cv-detail(\(literal(content)))")
-                    default:
-                        output.append("#list.item(\(literal(content)))")
-                    }
-                case .entry(let heading, let metadata, let bullets):
-                    output.append("#cv-entry(\(literal(heading)), \(tuple(metadata)), \(tuple(bullets)))")
-                }
-            }
+            output.append(CVSourceLayout.footer(ratio: ratio, primary: primary, secondary: secondary))
+        } else {
+            output += rows.flatMap(sectionLines)
         }
         return output.joined(separator: "\n") + "\n"
     }
 
+    private static func render(
+        _ section: Section, labels: [FactCategory: String], language: CVLanguage, appearance: CVSourceStyle?
+    ) -> [String] {
+        let category = section.category
+        let label = labels[category]?.nonBlank ?? appearance?.sectionTitles[category]
+        var output = [""]
+        if appearance == nil || category != .summary || label != nil {
+            let heading = label ?? CVExporter.sectionTitle(category, language)
+            let command = appearance?.sidebarRatio != nil && (category == .languages || category == .other)
+                ? "cv-inline-section" : "cv-section"
+            output.append("#\(command)(\(literal(heading)))")
+        }
+        for row in section.rows {
+            switch row {
+            case .fact(let content):
+                switch category {
+                case .summary:
+                    let paragraph = appearance == nil ? "par" : "cv-summary"
+                    output.append("#\(paragraph)(\(literal(content)))")
+                case .skills, .languages:
+                    output.append("#cv-detail(\(literal(content)))")
+                default:
+                    output.append("#list.item(\(literal(content)))")
+                }
+            case .entry(let heading, let metadata, let bullets):
+                var fields = [literal(heading), tuple(metadata), tuple(bullets)]
+                if appearance != nil, category == .experience || category == .education {
+                    fields.append("paired: true")
+                    if let date = metadata.last, isDateMetadata(date, category: category) {
+                        fields[1] = tuple(Array(metadata.dropLast()))
+                        fields.append("date: \(literal(date))")
+                    }
+                }
+                output.append("#cv-entry(\(fields.joined(separator: ", ")))")
+            }
+        }
+        return output
+    }
+
     private static let headerCategories: Set<FactCategory> = [.identity, .contact]
     private static let entryCategories: Set<FactCategory> = [.experience, .education, .projects]
+    private static let footerCategories: Set<FactCategory> = [.skills, .languages, .other, .projects]
 
     private static func resolve(_ composition: [CVSection], facts: [CVFact]) throws -> [Section] {
         let byID = Dictionary(uniqueKeysWithValues: facts.map { ($0.id, $0) })
@@ -172,7 +213,11 @@ enum CVLayout {
     private static let bulletPattern = try! NSRegularExpression(pattern: #"^\s*(?:[•◦▪‣●■]|[-–—]\s)"#)
 
     private static func isDateMetadata(_ fact: CVFact, category: FactCategory) -> Bool {
-        let text = fact.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        isDateMetadata(fact.text, category: category)
+    }
+
+    private static func isDateMetadata(_ value: String, category: FactCategory) -> Bool {
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let range = NSRange(text.startIndex..., in: text)
         return datePattern.firstMatch(in: text, range: range) != nil
             || (category == .education && yearPattern.firstMatch(in: text, range: range) != nil)
@@ -188,7 +233,7 @@ enum CVLayout {
         return escaped.isEmpty ? "()" : "(\(escaped),)"
     }
 
-    private static func literal(_ string: String) -> String {
+    static func literal(_ string: String) -> String {
         var result = "\""
         for scalar in string.unicodeScalars {
             switch scalar.value {
@@ -247,7 +292,7 @@ enum CVLayout {
 
         static func forTemplate(_ template: CVTemplate) -> Style {
             switch template {
-            case .editorial:
+            case .source, .editorial:
                 Style(bodyFont: #""Libertinus Serif""#, ink: "162636", accent: "14495D",
                       muted: "485866", rule: "C7D5DB", headlineSize: "33pt", nameTracking: "-0.7pt",
                       headerRule: "42mm")
