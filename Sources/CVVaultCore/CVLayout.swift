@@ -109,7 +109,7 @@ enum CVLayout {
                 var fields = [literal(heading), tuple(metadata), tuple(bullets)]
                 if appearance != nil, category == .experience || category == .education {
                     fields.append("paired: true")
-                    if let date = metadata.last, isDateMetadata(date, category: category) {
+                    if let date = metadata.last, CVFactStructure.isDate(date, category: category) {
                         fields[1] = tuple(Array(metadata.dropLast()))
                         fields.append("date: \(literal(date))")
                     }
@@ -164,86 +164,26 @@ enum CVLayout {
 
     private static func defaultSections(_ facts: [CVFact]) -> [Section] {
         var categories: [FactCategory] = []
-        var factsByCategory: [FactCategory: [CVFact]] = [:]
-        for fact in facts where !headerCategories.contains(fact.category) {
-            if factsByCategory[fact.category] == nil { categories.append(fact.category) }
-            factsByCategory[fact.category, default: []].append(fact)
+        var entriesByCategory: [FactCategory: [CVStructuredEntry]] = [:]
+        for entry in CVFactStructure.organize(facts) where !headerCategories.contains(entry.category) {
+            if entriesByCategory[entry.category] == nil { categories.append(entry.category) }
+            entriesByCategory[entry.category, default: []].append(entry)
         }
         return categories.map { category in
-            let items = factsByCategory[category, default: []]
-            let rows = entryCategories.contains(category) ? recognizedEntries(items, category: category) : items.map { .fact($0.text) }
-            return Section(category: category, rows: rows)
+            Section(category: category, rows: entriesByCategory[category, default: []].flatMap(automaticRows))
         }
     }
 
-    // Only promote a short source line when nearby dates or original bullet markers show its structure.
-    private static func recognizedEntries(_ facts: [CVFact], category: FactCategory) -> [Row] {
-        var rows: [Row] = []
-        var index = 0
-        while index < facts.count {
-            let heading = facts[index]
-            var next = index + 1
-            guard next < facts.count, heading.page == facts[next].page,
-                  isHeadingCandidate(heading) else {
-                rows.append(.fact(heading.text))
-                index += 1
-                continue
-            }
-            var metadata: [String] = []
-            if next + 1 < facts.count, heading.page == facts[next + 1].page,
-               facts[next].text.count <= 75, isHeadingCandidate(facts[next]),
-               isDateMetadata(facts[next + 1], category: category) {
-                metadata.append(facts[next].text)
-                next += 1
-            }
-            if isDateMetadata(facts[next], category: category) {
-                metadata.append(facts[next].text)
-                next += 1
-            }
-            var bullets: [String] = []
-            while next < facts.count, facts[next].page == heading.page, hasBulletMarker(facts[next]) {
-                bullets.append(facts[next].text)
-                next += 1
-            }
-            if metadata.isEmpty, bullets.isEmpty {
-                rows.append(.fact(heading.text))
-            } else {
-                rows.append(.entry(heading: heading.text, metadata: metadata, bullets: bullets))
-            }
-            index = next
+    private static func automaticRows(_ entry: CVStructuredEntry) -> [Row] {
+        let detail = entry.fields.dropFirst()
+        guard entryCategories.contains(entry.category), let title = entry.fields.first, title.role == .title,
+              !detail.isEmpty, detail.allSatisfy({ [.organization, .date, .achievement].contains($0.role) }) else {
+            // In particular, leave project links beside their description for the source-style renderer.
+            return entry.fields.map { .fact($0.fact.text) }
         }
-        return rows
-    }
-
-    private static func isHeadingCandidate(_ fact: CVFact) -> Bool {
-        let content = fact.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return content.count <= 120 && !content.contains(where: \.isNewline)
-            && !hasBulletMarker(fact) && !isDateMetadata(fact, category: .education)
-            && content.last.map { !".;!?".contains($0) } == true
-    }
-
-    private static let datePattern = try! NSRegularExpression(
-        pattern: #"^(?:(?:[\p{L}.]{3,12}\s+|\d{1,2}[/.-])?(?:19|20)\d{2}(?:[-/]\d{2})?)\s*(?:[-–—−]|\bto\b|\bà\b|\bau\b)\s*(?:(?:[\p{L}.]{3,12}\s+|\d{1,2}[/.-])?(?:19|20)\d{2}(?:[-/]\d{2})?|present|présent|current|en cours|aujourd['’]hui)$"#,
-        options: .caseInsensitive
-    )
-
-    private static let yearPattern = try! NSRegularExpression(pattern: #"^(?:19|20)\d{2}$"#)
-    private static let bulletPattern = try! NSRegularExpression(pattern: #"^\s*(?:[•◦▪‣●■]|[-–—]\s)"#)
-
-    private static func isDateMetadata(_ fact: CVFact, category: FactCategory) -> Bool {
-        isDateMetadata(fact.text, category: category)
-    }
-
-    private static func isDateMetadata(_ value: String, category: FactCategory) -> Bool {
-        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let range = NSRange(text.startIndex..., in: text)
-        return datePattern.firstMatch(in: text, range: range) != nil
-            || (category == .education && yearPattern.firstMatch(in: text, range: range) != nil)
-    }
-
-    private static func hasBulletMarker(_ fact: CVFact) -> Bool {
-        let text = fact.evidence
-        return bulletPattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        let metadata = detail.filter { $0.role == .organization || $0.role == .date }.map { $0.fact.text }
+        let bullets = detail.filter { $0.role == .achievement }.map { $0.fact.text }
+        return [.entry(heading: title.fact.text, metadata: metadata, bullets: bullets)]
     }
 
     private static func tuple(_ values: [String]) -> String {

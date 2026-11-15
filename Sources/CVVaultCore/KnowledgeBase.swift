@@ -285,6 +285,23 @@ public final class KnowledgeBase: Sendable {
         try lookupFact(id: id, in: connect())
     }
 
+    /// Returns the structured facts for one source in extraction order, including all review states.
+    public func factStructure(sourceID: String) throws -> [CVStructuredEntry] {
+        let rows: [CVFact?] = try connect().query(
+            """
+            SELECT f.id, f.source_id, f.page, f.category, f.text, f.evidence, f.status
+            FROM sources s LEFT JOIN facts f ON f.source_id = s.id
+            WHERE s.id = ? ORDER BY f.position, f.id
+            """,
+            [.text(sourceID)]
+        ) { row in
+            guard !row.isNull(0) else { return nil }
+            return try Self.readFact(row)
+        }
+        guard !rows.isEmpty else { throw KnowledgeBaseError.sourceNotFound }
+        return CVFactStructure.organize(rows.compactMap { $0 })
+    }
+
     /// Returns matching facts in request order. Missing IDs are omitted.
     public func facts(ids: [String]) throws -> [CVFact] {
         guard ids.count <= 1_000 else { throw KnowledgeBaseError.invalidRange }

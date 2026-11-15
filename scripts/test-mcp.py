@@ -35,7 +35,7 @@ def write_cv_pdf(path, name):
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         stream([name, "alex@example.invalid", "Professional Experience",
                 "Platform Engineer | Example Studio", "2021 - 2024",
-                'Built #read("example.txt") with 3 engineers.']),
+                '- Built #read("example.txt") with 3 engineers.']),
         stream(["Skills", "Swift, SQLite, Typst", "Education", "Example University"]),
         b"<< /Type /Annot /Subtype /Link /Rect [60 715 195 735] "
         b"/A << /S /URI /URI (https://example.invalid/portfolio) >> >>",
@@ -139,7 +139,10 @@ def run(binary, temp):
 
         catalog = client.request("tools/list")["result"]["tools"]
         tools = {tool["name"]: tool for tool in catalog}
-        assert tools.keys() == {"list_sources", "get_source", "search_facts", "list_cv_styles", "generate_cv"}
+        assert tools.keys() == {
+            "list_sources", "get_source", "search_facts", "get_fact_structure", "list_cv_styles", "generate_cv"
+        }
+        assert tools["get_fact_structure"]["inputSchema"]["required"] == ["source_id"]
         selection = tools["generate_cv"]["inputSchema"]["properties"]["template"]
         assert set(selection["enum"]) == set(STYLES), selection
         assert selection["default"] == "source", selection
@@ -172,7 +175,7 @@ def run(binary, temp):
                             query="engineers", status="pending")["facts"]
         experience = found[0]
         assert len(found) == 1 and experience["page"] == 1 and experience["sourceID"] == source_id
-        assert experience["text"] == experience["evidence"]
+        assert experience["evidence"] == "- " + experience["text"], experience
         identity = client.tool("search_facts", source_id=source_id, category="identity", status="all")["facts"][0]
         skills = client.tool("search_facts", source_id=source_id, category="skills", status="all")["facts"][0]
         role = client.tool("search_facts", source_id=source_id, category="experience",
@@ -181,8 +184,44 @@ def run(binary, temp):
                             query="2021", status="all")["facts"][0]
         other = client.tool("search_facts", source_id=other_id, category="identity", status="all")["facts"][0]
 
+        structure = client.tool("get_fact_structure", source_id=source_id)
+        raw_facts = client.tool("search_facts", source_id=source_id, status="all")["facts"]
+        structured_facts = [field["fact"] for entry in structure["entries"] for field in entry["fields"]]
+        assert structure["source_id"] == source_id and structure["fact_count"] == len(raw_facts)
+        assert structure["entry_count"] == len(structure["entries"]) and "next_offset" not in structure
+        assert len({entry["id"] for entry in structure["entries"]}) == structure["entry_count"]
+        assert sorted(structured_facts, key=lambda fact: fact["id"]) == sorted(raw_facts, key=lambda fact: fact["id"])
+        assert all(entry["sourceID"] == source_id for entry in structure["entries"])
+
+        work = client.tool("get_fact_structure", source_id=source_id, category="experience")
+        assert work["entry_count"] == 1 and work["fact_count"] == 3, work
+        assert work["entries"][0]["category"] == "experience"
+        fields = work["entries"][0]["fields"]
+        assert [(field["role"], field["fact"]["id"]) for field in fields] == [
+            ("title", role["id"]), ("date", dates["id"]), ("achievement", experience["id"])
+        ], fields
+        first_entry = client.tool("get_fact_structure", source_id=source_id, limit=1)
+        assert first_entry["entries"] == structure["entries"][:1] and first_entry["next_offset"] == 1
+        next_entry = client.tool("get_fact_structure", source_id=source_id, limit=1, offset=first_entry["next_offset"])
+        assert next_entry["entries"] == structure["entries"][1:2]
+        assert next_entry["entry_count"] == structure["entry_count"] and next_entry["fact_count"] == structure["fact_count"]
+        end = client.tool("get_fact_structure", source_id=source_id, offset=structure["entry_count"])
+        assert end["entries"] == [] and "next_offset" not in end
+        client.tool("get_fact_structure", source_id="absent", error="source")
+        client.tool("get_fact_structure", source_id=source_id, category="absent", error="category")
+        client.tool("get_fact_structure", source_id=source_id, status="absent", error="status")
+        client.tool("get_fact_structure", source_id=source_id, limit=51, error="limit")
+
         visible_ids = [identity["id"], skills["id"], experience["id"]]
         client.tool("generate_cv", fact_ids=visible_ids, error="verified")
+        verify_fixture_facts(vault, [experience["id"]])
+        verified_work = client.tool("get_fact_structure", source_id=source_id, category="experience", status="verified")
+        assert verified_work["entry_count"] == verified_work["fact_count"] == 1
+        assert verified_work["entries"][0]["id"] == work["entries"][0]["id"]
+        approved_fields = verified_work["entries"][0]["fields"]
+        assert len(approved_fields) == 1 and approved_fields[0]["role"] == "achievement"
+        assert approved_fields[0]["fact"]["id"] == experience["id"]
+        assert approved_fields[0]["fact"]["status"] == "verified"
         verify_fixture_facts(vault, visible_ids + [role["id"], dates["id"], other["id"]])
         assert client.tool("search_facts", source_id=source_id, query="SWIFT")["facts"][0]["status"] == "verified"
         client.tool("generate_cv", fact_ids=[identity["id"], other["id"]], error="single")

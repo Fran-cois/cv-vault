@@ -17,7 +17,7 @@ struct CVVaultApp: App {
 }
 
 enum VaultRoute: Hashable {
-    case overview, facts, graph, exports, codex
+    case overview, facts, factStructure, graph, exports, codex
     case source(String)
 }
 

@@ -23,7 +23,8 @@ L’archive du projet n’est pas notariée par Apple. Si macOS bloque son ouver
 1. Cliquez sur **Importer un PDF** et sélectionnez votre CV.
 2. Dans **Faits**, comparez les propositions au texte source. Corrigez le texte ou la catégorie, puis vérifiez ou écartez les éléments. Les faits vérifiés restent reliés à leur page et à leur extrait d’origine.
 3. Ouvrez **Graphe des faits** pour parcourir les liens entre PDF, rubriques et faits. Zoomez ou filtrez par source, rubrique ou statut, puis sélectionnez un fait pour lire son texte, son extrait d’origine et ouvrir la page correspondante.
-4. Dans **CV Typst**, sélectionnez vos faits vérifiés. Le style **Original** reprend la taille de page, les marges, la typographie, les couleurs et les colonnes détectées dans le PDF. Vous pouvez aussi sélectionner un modèle et choisir son format. Exportez un fichier `.typ` modifiable ou prévisualisez et enregistrez le PDF avec [Typst](https://github.com/typst/typst).
+4. Dans **CV structuré**, explorez les entrées d’un PDF. Les expériences et les formations regroupent leurs titres, organisations, dates et réalisations quand le document permet de les associer. Chaque champ affiche le fait, son statut et sa preuve.
+5. Dans **CV Typst**, sélectionnez vos faits vérifiés. Le style **Original** reprend la taille de page, les marges, la typographie, les couleurs et les colonnes détectées dans le PDF. Vous pouvez aussi sélectionner un modèle et choisir son format. Exportez un fichier `.typ` modifiable ou prévisualisez et enregistrez le PDF avec [Typst](https://github.com/typst/typst).
 
 Comparez les cinq modèles sur le même CV fictif. [Aperçu PDF](https://github.com/Fran-cois/cv-vault/releases/download/v0.4.0/Apercu-styles-CV-Vault.pdf)
 
@@ -49,6 +50,7 @@ Le serveur s’exécute en local sur STDIO, même quand l’app est fermée. Apr
 | `list_sources` | Lister les PDF et leur état d’extraction. |
 | `get_source` | Lire le texte et les liens d’un groupe de pages. |
 | `search_facts` | Chercher dans la base par texte, rubrique, source ou statut. |
+| `get_fact_structure` | Lire les entrées d’un PDF et le rôle de leurs champs, avec les faits, leurs identifiants et leurs preuves. |
 | `list_cv_styles` | Découvrir les styles, leurs identifiants et leurs descriptions en français ou en anglais. |
 | `generate_cv` | Composer un `.typ` à partir de faits vérifiés d’un même PDF, choisir le modèle et le format, et l’enregistrer si un nom de fichier est fourni. |
 
@@ -62,6 +64,8 @@ Passez l’identifiant du style dans `generate_cv.template`.
 | `minimal` | Minimaliste | Lignes sobres et typographie compacte sans empattements. |
 | `executive` | Direction | Typographie à empattements et en-tête bleu marine. |
 | `technical` | Technique | Intertitres et métadonnées à chasse fixe. |
+
+Appelez `get_fact_structure` avec `source_id` pour retrouver les champs liés. `category` filtre les entrées par rubrique et `status` filtre leurs champs après regroupement. Les identifiants des faits peuvent être réutilisés dans `generate_cv`.
 
 Pour structurer un CV via MCP, passez `fact_ids` et une liste ordonnée `sections`. Dans une expérience, une formation ou un projet, une entrée peut référencer `heading_fact_id`, `metadata_fact_ids` et `bullet_fact_ids`. Chaque fait de corps sélectionné doit être utilisé une seule fois, dans sa rubrique. Les faits d’identité et de contact vont dans l’en-tête.
 

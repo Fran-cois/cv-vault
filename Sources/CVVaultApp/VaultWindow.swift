@@ -77,6 +77,9 @@ struct VaultWindow: View {
                     NavigationLink(value: VaultRoute.facts) {
                         Label("Tous les faits", systemImage: "list.bullet.rectangle")
                     }
+                    NavigationLink(value: VaultRoute.factStructure) {
+                        Label("CV structuré", systemImage: "list.bullet.indent")
+                    }
                     NavigationLink(value: VaultRoute.graph) {
                         Label("Graphe des faits", systemImage: "point.3.connected.trianglepath.dotted")
                     }
@@ -142,6 +145,8 @@ struct VaultWindow: View {
             }
         case .graph:
             FactGraphView(model: model)
+        case .factStructure:
+            FactStructureView(model: model)
         case .exports:
             ExportsView(model: model)
         case .codex:

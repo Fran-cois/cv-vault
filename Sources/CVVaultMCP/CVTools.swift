@@ -14,6 +14,7 @@ struct CVTools {
     private static let maxSources = 50
     private static let maxPages = 10
     private static let maxFacts = 50
+    private static let maxEntries = 50
     private static let maxFactIDs = 100
     private static let defaultTemplate = CVTemplate.source
     private static let categories = FactCategory.allCases.map(\.rawValue)
@@ -23,7 +24,7 @@ struct CVTools {
     private static let sourceID = string("Source ID from list_sources.", max: 128)
     private static let offset = integer("Zero-based result offset.", minimum: 0, maximum: maxOffset)
     private static let label = string("A custom heading for this category.", max: 100)
-    private static let factID = string("An ID from search_facts for a verified fact.", max: 128)
+    private static let factID = string("A verified fact ID from get_fact_structure or search_facts.", max: 128)
     private static let entrySchema: [String: Any] = [
         "type": "object", "additionalProperties": false, "required": ["heading_fact_id"],
         "properties": [
@@ -76,6 +77,23 @@ struct CVTools {
             ]
         ),
         tool(
+            "get_fact_structure", title: "Read structured CV entries",
+            description: """
+            Group one source's facts into entries such as jobs, education, and projects. Each field has a
+            role and the original fact, including its ID, text, evidence, page, and review status. All
+            statuses are included by default. Filtering by status hides nonmatching fields within
+            each group and preserves the entry ID. Use verified fact IDs when composing a CV.
+            """,
+            properties: [
+                "source_id": sourceID,
+                "category": ["type": "string", "enum": categories],
+                "status": ["type": "string", "enum": statuses, "default": "all"],
+                "limit": integer("Maximum entries, default 20.", minimum: 1, maximum: maxEntries),
+                "offset": offset
+            ],
+            required: ["source_id"]
+        ),
+        tool(
             "list_cv_styles", title: "List CV styles",
             description: "List template IDs for generate_cv. The default, source, takes its style from the imported PDF.",
             properties: [
@@ -89,9 +107,10 @@ struct CVTools {
             "generate_cv", title: "Generate a Typst CV",
             description: """
             Compose a professional, standalone .typ résumé from verified facts in one PDF. Select relevant facts
-            with search_facts. Optionally use sections to group jobs, degrees, and projects with their original
-            dates and achievements. Supply every selected ID in fact_ids. The default source template uses the
-            original PDF's visual style. Provide filename to save, or omit it to return Typst source only.
+            with get_fact_structure or search_facts. For grouped jobs, degrees, and projects, use their field
+            roles to build optional sections. Supply every selected ID in fact_ids. The default source
+            template uses the original PDF's visual style. Provide filename to save, or omit it to return
+            Typst source only.
             """,
             properties: [
                 "fact_ids": factIDArray("All selected facts in display order if sections is omitted.", required: true),
@@ -140,6 +159,8 @@ struct CVTools {
                 result = try getSource(arguments)
             case "search_facts":
                 result = try searchFacts(arguments)
+            case "get_fact_structure":
+                result = try getFactStructure(arguments)
             case "list_cv_styles":
                 result = try Self.listStyles(arguments)
             case "generate_cv":
@@ -195,24 +216,8 @@ struct CVTools {
     private func searchFacts(_ args: [String: Any]) throws -> [String: Any] {
         let query = try Self.readString(args, "query", max: 500, allowEmpty: true) ?? ""
         let sourceID = try Self.readString(args, "source_id", max: 128)
-        let category: FactCategory?
-        if let raw = args["category"] {
-            guard let value = raw as? String, let selected = FactCategory(rawValue: value) else {
-                throw ToolArgumentError("category must be one of: \(Self.categories.joined(separator: ", ")).")
-            }
-            category = selected
-        } else {
-            category = nil
-        }
-        let status: FactStatus?
-        if let raw = args["status"] {
-            guard let value = raw as? String, Self.statuses.contains(value) else {
-                throw ToolArgumentError("status must be one of: \(Self.statuses.joined(separator: ", ")).")
-            }
-            status = FactStatus(rawValue: value)
-        } else {
-            status = .verified
-        }
+        let category = try Self.readCategory(args)
+        let status = try Self.readStatus(args, default: .verified)
         let limit = try Self.readInteger(args, "limit", in: 1...Self.maxFacts, default: 20)
         let offset = try Self.readInteger(args, "offset", in: 0...Self.maxOffset, default: 0)
         let facts = try base.searchFacts(
@@ -220,6 +225,37 @@ struct CVTools {
         )
         var reply = ["facts": try Self.json(Array(facts.prefix(limit)))]
         if facts.count > limit { reply["next_offset"] = offset + limit }
+        return reply
+    }
+
+    private func getFactStructure(_ args: [String: Any]) throws -> [String: Any] {
+        let sourceID = try Self.readString(args, "source_id", max: 128, required: true) ?? ""
+        let category = try Self.readCategory(args)
+        let status = try Self.readStatus(args, default: nil)
+        let limit = try Self.readInteger(args, "limit", in: 1...Self.maxEntries, default: 20)
+        let offset = try Self.readInteger(args, "offset", in: 0...Self.maxOffset, default: 0)
+        let structure = try base.factStructure(sourceID: sourceID)
+        let matches = structure.compactMap { entry -> (CVStructuredEntry, [CVStructuredField])? in
+            guard category == nil || entry.category == category else { return nil }
+            let fields = status.map { selected in entry.fields.filter { $0.fact.status == selected } }
+                ?? entry.fields
+            return fields.isEmpty ? nil : (entry, fields)
+        }
+        let entries = try matches.dropFirst(offset).prefix(limit).map { entry, fields -> [String: Any] in
+            [
+                "id": entry.id,
+                "sourceID": entry.sourceID,
+                "category": entry.category.rawValue,
+                "fields": try Self.json(fields)
+            ]
+        }
+        var reply: [String: Any] = [
+            "source_id": sourceID,
+            "entries": entries,
+            "entry_count": matches.count,
+            "fact_count": matches.reduce(0) { $0 + $1.1.count }
+        ]
+        if offset + limit < matches.count { reply["next_offset"] = offset + limit }
         return reply
     }
 
@@ -263,7 +299,7 @@ struct CVTools {
         let filename = try Self.readString(args, "filename", max: 100)
         let facts = try base.facts(ids: ids)
         guard facts.map(\.id) == ids else {
-            throw ToolArgumentError("At least one fact no longer exists. Refresh results with search_facts.")
+            throw ToolArgumentError("At least one fact no longer exists. Refresh with get_fact_structure or search_facts.")
         }
         guard let sourceID = facts.first?.sourceID, facts.allSatisfy({ $0.sourceID == sourceID }) else {
             throw ToolArgumentError("Select facts from a single PDF source.")
@@ -342,6 +378,22 @@ struct CVTools {
             throw ToolArgumentError("\(key) must be one of: \(T.allCases.map(\.rawValue).joined(separator: ", ")).")
         }
         return choice
+    }
+
+    private static func readCategory(_ args: [String: Any]) throws -> FactCategory? {
+        guard let raw = args["category"] else { return nil }
+        guard let value = raw as? String, let category = FactCategory(rawValue: value) else {
+            throw ToolArgumentError("category must be one of: \(categories.joined(separator: ", ")).")
+        }
+        return category
+    }
+
+    private static func readStatus(_ args: [String: Any], default fallback: FactStatus?) throws -> FactStatus? {
+        guard let raw = args["status"] else { return fallback }
+        guard let value = raw as? String, statuses.contains(value) else {
+            throw ToolArgumentError("status must be one of: \(statuses.joined(separator: ", ")).")
+        }
+        return FactStatus(rawValue: value)
     }
 
     private static func readSections(_ args: [String: Any], available: Set<String>) throws -> [CVSection]? {
