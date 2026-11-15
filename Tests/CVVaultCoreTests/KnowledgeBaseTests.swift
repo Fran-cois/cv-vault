@@ -103,6 +103,70 @@ final class KnowledgeBaseTests: XCTestCase {
         }
     }
 
+    func testFrenchCVResolvesLocalColumnsAndKeepsWrappedEvidenceWithItsBullet() throws {
+        try withTemporaryDirectory { folder in
+            let knowledge = try KnowledgeBase(databaseURL: folder.appendingPathComponent("knowledge.sqlite3"))
+            let file = folder.appendingPathComponent("columns.pdf")
+            try makePDF(at: file, pages: [.positioned([
+                ("Camille Exemple", 64, 746, 18),
+                ("camille@example.invalid", 64, 727, 10),
+                ("Ingénieure logicielle avec une expérience en livraison de produits.", 64, 708, 11),
+                ("EXPÉRIENCE PROFESSIONNELLE", 64, 682, 12),
+                ("Ingénieure plateforme", 64, 659, 11),
+                ("2020 – 2024", 456, 659, 10),
+                ("Studio Exemple", 64, 644, 10),
+                ("• Déployé un service régional", 64, 625, 10),
+                ("• Réduit de 30 % le délai", 330, 625, 10),
+                ("pour trois équipes internes.", 77, 613, 10),
+                ("de traitement.", 343, 613, 10),
+                ("• Documenté les interfaces", 64, 599, 10),
+                ("• Formé deux équipes", 330, 599, 10),
+                ("FORMATION & RECHERCHE", 64, 568, 12),
+                ("Master en informatique", 64, 546, 11),
+                ("2019", 498, 546, 10),
+                ("Institut Exemple", 64, 531, 10),
+                ("• Étudié les systèmes répartis", 64, 512, 10),
+                ("• Analysé un jeu de données", 330, 512, 10),
+                ("COMPÉTENCES", 64, 473, 12),
+                ("PROJETS", 330, 473, 12),
+                ("SQL : PostgreSQL", 64, 454, 10),
+                ("Observatoire local :", 330, 454, 10),
+                ("suivi des flux régionaux.", 330, 442, 10),
+                ("Langues  français et anglais", 64, 425, 10)
+            ])])
+            let document = try XCTUnwrap(PDFDocument(url: file))
+            let page = try XCTUnwrap(document.page(at: 0))
+            let annotation = PDFAnnotation(bounds: CGRect(x: 330, y: 451, width: 88, height: 13),
+                                           forType: .link, withProperties: nil)
+            annotation.action = PDFActionURL(url: try XCTUnwrap(URL(string: "https://example.invalid/observatory")))
+            page.addAnnotation(annotation)
+            XCTAssertTrue(document.write(to: file))
+            let result = try knowledge.importPDF(at: file)
+            let id = result.source.id
+            let facts = try knowledge.searchFacts(sourceID: id)
+
+            let first = try XCTUnwrap(facts.first { $0.text.contains("Déployé") })
+            let second = try XCTUnwrap(facts.first { $0.text.contains("Réduit") })
+            XCTAssertEqual(first.category, .experience)
+            XCTAssertEqual(second.category, .experience)
+            XCTAssertTrue(first.text.contains("pour trois équipes internes."))
+            XCTAssertTrue(second.text.contains("de traitement."))
+            XCTAssertTrue(first.evidence.contains("Déployé"))
+            XCTAssertTrue(first.evidence.contains("pour trois équipes internes."))
+            XCTAssertFalse(first.evidence.contains("Réduit"))
+            XCTAssertFalse(second.evidence.contains("pour trois équipes internes."))
+            XCTAssertTrue(facts.contains { $0.category == .education && $0.text.contains("Master") })
+            XCTAssertTrue(facts.contains { $0.category == .education && $0.text.contains("systèmes répartis") })
+            XCTAssertTrue(facts.contains { $0.category == .languages && $0.text.contains("anglais") })
+            XCTAssertTrue(facts.contains { $0.category == .summary && $0.text.contains("livraison de produits") })
+            XCTAssertTrue(facts.contains { $0.category == .projects && $0.text.contains("flux régionaux") })
+            XCTAssertFalse(facts.contains { $0.category == .contact && $0.text.contains("observatory") })
+            XCTAssertTrue(try XCTUnwrap(knowledge.pages(sourceID: id).first).links
+                .contains("https://example.invalid/observatory"))
+            XCTAssertTrue(facts.allSatisfy { $0.page == 1 && $0.status == .pending })
+        }
+    }
+
     func testConcurrentImportsDeduplicateAcrossConnections() async throws {
         let folder = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -122,6 +186,7 @@ final class KnowledgeBaseTests: XCTestCase {
 
     private enum FixturePage {
         case text([String])
+        case positioned([(text: String, x: CGFloat, y: CGFloat, size: CGFloat)])
         case image
         case blank
     }
@@ -135,6 +200,10 @@ final class KnowledgeBaseTests: XCTestCase {
             case .text(let lines):
                 for (offset, line) in lines.enumerated() {
                     draw(line, on: pdf, size: 18, x: 64, y: 730 - CGFloat(offset * 30))
+                }
+            case .positioned(let lines):
+                for line in lines {
+                    draw(line.text, on: pdf, size: line.size, x: line.x, y: line.y)
                 }
             case .image:
                 let raster = try XCTUnwrap(CGContext(

@@ -35,6 +35,7 @@ final class VaultModel: ObservableObject {
     @Published private(set) var exports: [URL] = []
     @Published private(set) var revision = 0
     @Published private(set) var isImporting = false
+    @Published private(set) var reextractingSourceID: String?
     @Published private(set) var isReady = false
     @Published var notice: VaultNotice?
     @Published var errorMessage: String?
@@ -129,6 +130,28 @@ final class VaultModel: ObservableObject {
     func requireDatabase() throws -> KnowledgeBase {
         guard let database else { throw VaultUIError.databaseUnavailable }
         return database
+    }
+
+    func reextract(_ source: CVSource) {
+        guard let database, reextractingSourceID == nil else { return }
+        reextractingSourceID = source.id
+        notice = nil
+        Task {
+            defer { reextractingSourceID = nil }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try database.reextractPDF(sourceID: source.id)
+                }.value
+                try refresh()
+                var summary = "\(result.previousFactCount) → \(result.source.factCount) faits"
+                if result.reviewedOrEditedFactCount > 0 {
+                    summary += " · \(result.reviewedOrEditedFactCount) revus ou modifiés conservés"
+                }
+                notice = VaultNotice(title: "Extraction mise à jour", message: summary)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
     func update(_ fact: CVFact, status: FactStatus, text: String? = nil, category: FactCategory? = nil) throws {

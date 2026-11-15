@@ -24,10 +24,20 @@ struct SourceView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(source.verifiedFactCount == 0)
                 .help(source.verifiedFactCount == 0 ? "Validez un fait pour créer un CV" : "Créer un CV Typst depuis ce PDF")
+                if model.reextractingSourceID == source.id {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Réextraction en cours")
+                }
                 Menu {
+                    Button("Réextraire les faits", systemImage: "arrow.clockwise") {
+                        model.reextract(source)
+                    }
+                    .disabled(model.reextractingSourceID != nil)
                     Button("Supprimer de la bibliothèque…", systemImage: "trash", role: .destructive) {
                         showDelete = true
                     }
+                    .disabled(model.reextractingSourceID == source.id)
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -121,7 +131,7 @@ private struct ExtractedPages: View {
                 }
             }
         }
-        .task(id: source.id) {
+        .task(id: model.revision) {
             do {
                 let database = try model.requireDatabase()
                 let sourceID = source.id

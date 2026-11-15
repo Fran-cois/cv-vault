@@ -119,7 +119,7 @@ struct MCPTransport {
         return [
             "protocolVersion": version,
             "capabilities": ["tools": ["listChanged": false]],
-            "serverInfo": ["name": "cv-vault", "version": "0.2.0"],
+            "serverInfo": ["name": "cv-vault", "version": "0.3.0"],
             "instructions": """
             Tailor a résumé from verified facts in one PDF. Choose a source with list_sources, use search_facts for
             relevant evidence, and call generate_cv. When evidence is clear, use sections to group verified role,

@@ -27,7 +27,9 @@ L’archive du projet n’est pas notariée par Apple. Si macOS bloque son ouver
 
 Deux exemples générés avec un CV fictif : [Éditorial (PDF)](https://github.com/Fran-cois/cv-vault/releases/download/v0.2.0/CV-fictif-editorial.pdf) · [Classique (PDF)](https://github.com/Fran-cois/cv-vault/releases/download/v0.2.0/CV-fictif-classic.pdf).
 
-L’import combine le texte intégré au PDF et la reconnaissance locale de Vision pour les pages scannées. Il conserve l’original, le texte extrait par page et les liens détectés. Le classement automatique couvre les rubriques courantes des CV français et anglais, ainsi que les informations sans rubrique reconnue. Une mise en page complexe ou un scan de mauvaise qualité peut fausser l’ordre des lignes et la reconnaissance : consultez le PDF en cas de doute. L’app signale les pages qu’elle n’a pas pu lire. Chaque PDF est limité à 50 Mio et 100 pages.
+L’import s’appuie sur la position du texte dans le PDF pour lire les colonnes et rattacher les retours à la ligne au bon fait. Les pages scannées passent par la reconnaissance locale de Vision. L’app conserve le PDF original, le texte brut par page et les liens détectés. Consultez l’extrait de chaque fait avant de le valider, surtout si la mise en page est complexe ou le scan de mauvaise qualité. Chaque PDF est limité à 50 Mio et 100 pages.
+
+Pour un PDF déjà dans la bibliothèque, ouvrez le menu **Actions PDF**, puis **Réextraire les faits**. Les faits déjà revus ou modifiés sont conservés.
 
 ## Connecter Codex
 

@@ -30,15 +30,19 @@ public final class KnowledgeBase: Sendable {
         try Self.protectDatabaseFile(at: self.databaseURL)
 
         let database = try connect()
-        let version = try database.query("PRAGMA user_version") { $0.integer(0) }.first
-        guard version == 0 || version == 1 else { throw KnowledgeBaseError.databaseVersion }
-        if version == 0 {
+        let currentVersion = 2
+        guard let version = try database.query("PRAGMA user_version", map: { $0.integer(0) }).first,
+              (0...currentVersion).contains(version) else {
+            throw KnowledgeBaseError.databaseVersion
+        }
+        if version < currentVersion {
             try database.transaction {
                 let current = try database.query("PRAGMA user_version") { $0.integer(0) }.first
-                if current == 1 { return }
-                guard current == 0 else { throw KnowledgeBaseError.databaseVersion }
-                try database.execute(Self.schema)
-                try database.execute("PRAGMA user_version = 1")
+                if current == currentVersion { return }
+                guard current == 0 || current == 1 else { throw KnowledgeBaseError.databaseVersion }
+                if current == 0 { try database.execute(Self.schema) }
+                try database.execute(Self.trackUserEdits)
+                try database.execute("PRAGMA user_version = \(currentVersion)")
             }
         }
     }
@@ -66,8 +70,7 @@ public final class KnowledgeBase: Sendable {
         }
 
         let id = UUID().uuidString
-        let pages = try PDFImporter.extractPages(from: data, sourceID: id)
-        let facts = PDFImporter.facts(from: pages)
+        let (pages, facts) = try PDFImporter.extract(from: data, sourceID: id)
         let name = url.lastPathComponent
         let date = Date()
         let unreadable = pages.filter { $0.method == .unreadable }.count
@@ -85,23 +88,9 @@ public final class KnowledgeBase: Sendable {
                 [.text(id), .text(name), .text(hash), .real(date.timeIntervalSince1970),
                  .integer(pages.count), .integer(unreadable), .blob(data)]
             )
-            for page in pages {
-                try database.run(
-                    "INSERT INTO pages (source_id, number, text, links, method) VALUES (?, ?, ?, ?, ?)",
-                    [.text(id), .integer(page.number), .text(page.text),
-                     .blob(try linkEncoder.encode(page.links)), .text(page.method.rawValue)]
-                )
-            }
+            for page in pages { try Self.writePage(page, to: database, linkEncoder: linkEncoder) }
             for (position, fact) in facts.enumerated() {
-                try database.run(
-                    """
-                    INSERT INTO facts (id, source_id, page, position, category, text, evidence, status, search_text)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [.text(fact.id), .text(id), .integer(fact.page), .integer(position), .text(fact.category.rawValue),
-                     .text(fact.text), .text(fact.evidence), .text(fact.status.rawValue),
-                     .text(Self.searchText(for: fact.text, evidence: fact.evidence))]
-                )
+                try Self.insertFact(StoredFact(fact: fact, userEdited: false), at: position, into: database)
             }
             return PDFImportResult(
                 source: CVSource(
@@ -110,6 +99,56 @@ public final class KnowledgeBase: Sendable {
                     pendingFactCount: facts.count
                 ),
                 isDuplicate: false
+            )
+        }
+    }
+
+    /// Refreshes extraction from the stored PDF and reconciles review changes made while it was running.
+    public func reextractPDF(sourceID: String) throws -> PDFReextractionResult {
+        guard let data = try originalPDF(sourceID: sourceID) else { throw KnowledgeBaseError.sourceNotFound }
+        let (pages, extracted) = try PDFImporter.extract(from: data, sourceID: sourceID)
+
+        let database = try connect()
+        return try database.transaction {
+            guard let source = try findSource(in: database, where: "id = ?", value: sourceID) else {
+                throw KnowledgeBaseError.sourceNotFound
+            }
+            guard pages.count == source.pageCount else {
+                throw KnowledgeBaseError.database("The stored PDF page count changed during extraction.")
+            }
+
+            let oldPages = try Self.readPages(in: database, sourceID: sourceID, startPage: 1, limit: source.pageCount)
+            let previousPages = Dictionary(uniqueKeysWithValues: oldPages.map { ($0.number, $0) })
+            let fallbackPages = Set(pages.compactMap { page -> Int? in
+                guard page.method == .unreadable,
+                      let previous = previousPages[page.number], previous.method != .unreadable else { return nil }
+                return page.number
+            })
+            let existing = try Self.readFactsForReextraction(in: database, sourceID: sourceID, previousPages: oldPages)
+            let updated = FactReextraction.merge(existing: existing, extracted: extracted, usingPreviousPages: fallbackPages)
+            let linkEncoder = JSONEncoder()
+            for page in pages where !fallbackPages.contains(page.number) {
+                try Self.writePage(page, to: database, linkEncoder: linkEncoder)
+            }
+            let unreadable = pages.filter { $0.method == .unreadable && !fallbackPages.contains($0.number) }.count
+            try database.run(
+                "UPDATE sources SET unreadable_page_count = ? WHERE id = ?",
+                [.integer(unreadable), .text(sourceID)]
+            )
+            try database.run("DELETE FROM facts WHERE source_id = ?", [.text(sourceID)])
+            for (position, fact) in updated.enumerated() {
+                try Self.insertFact(fact, at: position, into: database)
+            }
+
+            guard let refreshed = try findSource(in: database, where: "id = ?", value: sourceID) else {
+                throw KnowledgeBaseError.sourceNotFound
+            }
+            let previousIDs = Set(existing.map { $0.fact.id })
+            let preserved = updated.count(where: { previousIDs.contains($0.fact.id) })
+            return PDFReextractionResult(
+                source: refreshed, previousFactCount: existing.count, preservedFactCount: preserved,
+                addedFactCount: updated.count - preserved, removedFactCount: existing.count - preserved,
+                reviewedOrEditedFactCount: updated.count(where: \.isProtected)
             )
         }
     }
@@ -129,8 +168,14 @@ public final class KnowledgeBase: Sendable {
     public func pages(sourceID: String, startPage: Int = 1, limit: Int = 100) throws -> [CVPage] {
         guard startPage >= 1 else { throw KnowledgeBaseError.invalidRange }
         try Self.validateRange(limit: limit, offset: 0)
+        return try Self.readPages(in: connect(), sourceID: sourceID, startPage: startPage, limit: limit)
+    }
+
+    private static func readPages(
+        in database: SQLiteConnection, sourceID: String, startPage: Int, limit: Int
+    ) throws -> [CVPage] {
         let decoder = JSONDecoder()
-        return try connect().query(
+        return try database.query(
             """
             SELECT source_id, number, text, links, method
             FROM pages WHERE source_id = ? AND number >= ? ORDER BY number LIMIT ?
@@ -144,6 +189,58 @@ public final class KnowledgeBase: Sendable {
                 sourceID: row.text(0), number: row.integer(1), text: row.text(2),
                 links: try decoder.decode([String].self, from: row.blob(3)), method: method
             )
+        }
+    }
+
+    private static func writePage(_ page: CVPage, to database: SQLiteConnection, linkEncoder: JSONEncoder) throws {
+        try database.run(
+            """
+            INSERT INTO pages (source_id, number, text, links, method) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(source_id, number) DO UPDATE
+            SET text = excluded.text, links = excluded.links, method = excluded.method
+            """,
+            [.text(page.sourceID), .integer(page.number), .text(page.text),
+             .blob(try linkEncoder.encode(page.links)), .text(page.method.rawValue)]
+        )
+    }
+
+    private static func insertFact(_ stored: StoredFact, at position: Int, into database: SQLiteConnection) throws {
+        let fact = stored.fact
+        try database.run(
+            """
+            INSERT INTO facts (id, source_id, page, position, category, text, evidence, status, search_text, user_edited)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [.text(fact.id), .text(fact.sourceID), .integer(fact.page), .integer(position), .text(fact.category.rawValue),
+             .text(fact.text), .text(fact.evidence), .text(fact.status.rawValue),
+             .text(searchText(for: fact.text, evidence: fact.evidence)), .integer(stored.userEdited ? 1 : 0)]
+        )
+    }
+
+    private static func readFactsForReextraction(
+        in database: SQLiteConnection, sourceID: String, previousPages: [CVPage]
+    ) throws -> [StoredFact] {
+        let rows = try database.query(
+            """
+            SELECT f.id, f.source_id, f.page, f.category, f.text, f.evidence, f.status, f.position, f.user_edited
+            FROM facts f WHERE f.source_id = ? ORDER BY f.position, f.id
+            """,
+            [.text(sourceID)]
+        ) { row in
+            (fact: try readFact(row), position: row.integer(7),
+             wasEdited: row.isNull(8) ? nil : row.integer(8) != 0)
+        }
+        // Schema 1 recorded no edit flag. Its original facts can be reconstructed from the saved page text.
+        let legacy = rows.contains { $0.wasEdited == nil } ? LegacyPDFParser.facts(from: previousPages) : []
+        return rows.map { row in
+            if let wasEdited = row.wasEdited { return StoredFact(fact: row.fact, userEdited: wasEdited) }
+            guard legacy.indices.contains(row.position) else {
+                return StoredFact(fact: row.fact, userEdited: true)
+            }
+            let original = legacy[row.position]
+            let wasEdited = row.fact.page != original.page || row.fact.evidence != original.evidence
+                || row.fact.text != original.text || row.fact.category != original.category
+            return StoredFact(fact: row.fact, userEdited: wasEdited)
         }
     }
 
@@ -292,6 +389,16 @@ public final class KnowledgeBase: Sendable {
 
     private static let factSelect = "SELECT f.id, f.source_id, f.page, f.category, f.text, f.evidence, f.status FROM facts f"
 
+    private static let trackUserEdits = """
+        ALTER TABLE facts ADD COLUMN user_edited INTEGER CHECK(user_edited IN (0, 1));
+
+        CREATE TRIGGER facts_mark_user_edit AFTER UPDATE OF text, category ON facts
+        WHEN NEW.text IS NOT OLD.text OR NEW.category IS NOT OLD.category
+        BEGIN
+            UPDATE facts SET user_edited = 1 WHERE id = NEW.id;
+        END;
+        """
+
     private static let schema = """
         CREATE TABLE sources (
             id TEXT PRIMARY KEY,
@@ -347,6 +454,7 @@ private struct SQLRow {
     }
 
     func integer(_ index: Int32) -> Int { Int(sqlite3_column_int64(statement, index)) }
+    func isNull(_ index: Int32) -> Bool { sqlite3_column_type(statement, index) == SQLITE_NULL }
     func real(_ index: Int32) -> Double { sqlite3_column_double(statement, index) }
 
     func blob(_ index: Int32) -> Data {
