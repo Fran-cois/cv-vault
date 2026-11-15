@@ -184,6 +184,41 @@ final class KnowledgeBaseTests: XCTestCase {
         XCTAssertEqual(try first.listSources().count, 1)
     }
 
+    func testOriginalStyleReusesSourceLinkLabelsAndKeepsProjectArrowClickable() throws {
+        try withTemporaryDirectory { folder in
+            let file = folder.appendingPathComponent("links.pdf")
+            try makePDF(at: file, pages: [.text(["Camille Exemple", "Portfolio", "Projets", "Observatoire local"])])
+            let document = try XCTUnwrap(PDFDocument(url: file))
+            let page = try XCTUnwrap(document.page(at: 0))
+            let profile = "https://example.invalid/portfolio"
+            let project = "https://example.invalid/observatoire"
+            let link = PDFAnnotation(bounds: CGRect(x: 63, y: 694, width: 100, height: 25), forType: .link, withProperties: nil)
+            link.action = PDFActionURL(url: try XCTUnwrap(URL(string: profile)))
+            page.addAnnotation(link)
+            XCTAssertTrue(document.write(to: file))
+            let style = try CVSourceStyle.analyze(pdf: Data(contentsOf: file))
+            XCTAssertEqual(style.linkLabels[profile], "Portfolio")
+
+            let facts: [CVFact] = [
+                ("Camille Exemple", FactCategory.identity),
+                (profile, .contact),
+                ("Observatoire ↗ · Analyse des flux", .projects),
+                (project, .projects)
+            ].map { text, category in
+                CVFact(id: UUID().uuidString, sourceID: "links", page: 1, category: category,
+                       text: text, evidence: text, status: .verified)
+            }
+            let original = try CVExporter.generate(facts: facts, template: .source, sourceStyle: style)
+            XCTAssertTrue(original.contains(#"("Portfolio", "https://example.invalid/portfolio")"#))
+            XCTAssertTrue(original.contains(#"#cv-project-link("Observatoire ", " · Analyse des flux", "https://example.invalid/observatoire")"#))
+            XCTAssertFalse(original.contains("#cv-project-url(" + CVLayout.literal(project)))
+
+            let preset = try CVExporter.generate(facts: facts, template: .editorial, sourceStyle: style)
+            XCTAssertTrue(preset.contains(#"("https://example.invalid/portfolio", "https://example.invalid/portfolio")"#))
+            XCTAssertTrue(preset.contains("#list.item(" + CVLayout.literal(project)))
+        }
+    }
+
     private enum FixturePage {
         case text([String])
         case positioned([(text: String, x: CGFloat, y: CGFloat, size: CGFloat)])

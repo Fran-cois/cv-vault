@@ -40,8 +40,9 @@ enum CVLayout {
         for item in subtitle { output.append("#cv-subtitle(\(literal(item)))") }
         if !contacts.isEmpty {
             let entries = contacts.map { value in
-                let destination = contactDestination(value).map(literal) ?? "none"
-                return "(\(literal(value)), \(destination))"
+                let destination = contactDestination(value)
+                let label = destination.flatMap { appearance?.linkLabels[$0] } ?? value
+                return "(\(literal(label)), \(destination.map(literal) ?? "none"))"
             }
             output.append("#cv-contact((\(entries.joined(separator: ", ")),))")
         }
@@ -75,9 +76,26 @@ enum CVLayout {
                 ? "cv-inline-section" : "cv-section"
             output.append("#\(command)(\(literal(heading)))")
         }
-        for row in section.rows {
+        var attachedProjectURL: Int?
+        for (index, row) in section.rows.enumerated() {
             switch row {
             case .fact(let content):
+                if appearance != nil, category == .projects {
+                    if let address = webDestination(content) {
+                        if attachedProjectURL != index {
+                            output.append("#cv-project-url(\(literal(content)), \(literal(address)))")
+                        }
+                        continue
+                    }
+                    let parts = content.split(separator: "↗", maxSplits: 2, omittingEmptySubsequences: false)
+                    if parts.count == 2, let address = projectDestination(in: section.rows, after: index) {
+                        let before = String(parts[0])
+                        let after = String(parts[1])
+                        output.append("#cv-project-link(\(literal(before)), \(literal(after)), \(literal(address)))")
+                        attachedProjectURL = index + 1
+                        continue
+                    }
+                }
                 switch category {
                 case .summary:
                     let paragraph = appearance == nil ? "par" : "cv-summary"
@@ -257,8 +275,24 @@ enum CVLayout {
         if contact.range(of: #"^[A-Za-z0-9_.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"#, options: .regularExpression) != nil {
             return "mailto:" + contact
         }
-        guard !contact.contains(where: \.isWhitespace),
-              let address = URLComponents(string: contact),
+        return webDestination(contact)
+    }
+
+    private static func projectDestination(in rows: [Row], after index: Int) -> String? {
+        let following = rows.dropFirst(index + 1)
+        guard case .fact(let value)? = following.first, let address = webDestination(value) else {
+            return nil
+        }
+        // Leave consecutive links visible because a single-arrow association would be ambiguous.
+        if case .fact(let next)? = following.dropFirst().first, webDestination(next) != nil {
+            return nil
+        }
+        return address
+    }
+
+    private static func webDestination(_ value: String) -> String? {
+        guard !value.contains(where: \.isWhitespace),
+              let address = URLComponents(string: value),
               let scheme = address.scheme?.lowercased(), ["http", "https"].contains(scheme),
               let host = address.host, !host.isEmpty, address.user == nil, address.password == nil else {
             return nil

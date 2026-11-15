@@ -72,6 +72,10 @@ enum CVSourceLayout {
           #heading(level: 1, text(\#(attributes(style.role)), body))
         ]
         #let cv-detail(body) = block(above: 1pt, below: 0.7pt, text(body))
+        #let cv-project-link(before, after, address) = list.item(
+          text(before) + link(address, text(fill: \#(color(style.contact.color)), "↗")) + text(after)
+        )
+        #let cv-project-url(body, address) = list.item(link(address, text(body)))
         #let cv-entry(title, metadata, bullets, paired: false, date: none) = {
           block(width: 100%, above: 3pt, below: 1pt, sticky: bullets.len() > 0)[
             #if date == none {

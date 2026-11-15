@@ -43,6 +43,7 @@ public struct CVSourceStyle: Sendable, Equatable {
     public let sectionRule: Bool
     public let ruleColor: String?
     public let sectionTitles: [FactCategory: String]
+    public let linkLabels: [String: String]
     public let bulletColumns: Int
     /// Share of the lower region occupied by its left column when two headings align.
     public let sidebarRatio: Double?
@@ -191,8 +192,23 @@ private extension CVSourceStyle {
             summary: summary?.style ?? body,
             bodyLineHeight: inferLineHeight(runs, body: body),
             headerCentered: headerCentered, sectionFill: fillAndRule.fill, sectionRule: fillAndRule.rule != nil,
-            ruleColor: fillAndRule.rule, sectionTitles: sectionTitles, bulletColumns: columns, sidebarRatio: sidebar
+            ruleColor: fillAndRule.rule, sectionTitles: sectionTitles, linkLabels: measureLinkLabels(on: page),
+            bulletColumns: columns, sidebarRatio: sidebar
         )
+    }
+
+    static func measureLinkLabels(on page: PDFPage) -> [String: String] {
+        var labels: [String: String] = [:]
+        for annotation in page.annotations {
+            guard let url = (annotation.action as? PDFActionURL)?.url,
+                  let scheme = url.scheme?.lowercased(), ["https", "http", "mailto"].contains(scheme) else { continue }
+            let bounds = annotation.bounds.insetBy(dx: -0.1, dy: -0.5)
+            guard let label = page.selection(for: bounds)?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !label.isEmpty, label.count <= 120, !label.contains(where: \.isNewline),
+                  label.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { continue }
+            labels[url.absoluteString] = labels[url.absoluteString] ?? label
+        }
+        return labels
     }
 
     static func measureRuns(on page: PDFPage, text: NSAttributedString, canvas: CGRect) -> [Run] {
