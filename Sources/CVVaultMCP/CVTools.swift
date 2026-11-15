@@ -16,11 +16,32 @@ struct CVTools {
     private static let maxFacts = 50
     private static let maxFactIDs = 100
     private static let categories = FactCategory.allCases.map(\.rawValue)
+    private static let bodyCategories = FactCategory.allCases.filter { $0 != .identity && $0 != .contact }.map(\.rawValue)
     private static let statuses = FactStatus.allCases.map(\.rawValue) + ["all"]
 
     private static let sourceID = string("Source ID from list_sources.", max: 128)
     private static let offset = integer("Zero-based result offset.", minimum: 0, maximum: maxOffset)
     private static let label = string("A custom heading for this category.", max: 100)
+    private static let factID = string("An ID from search_facts for a verified fact.", max: 128)
+    private static let entrySchema: [String: Any] = [
+        "type": "object", "additionalProperties": false, "required": ["heading_fact_id"],
+        "properties": [
+            "heading_fact_id": string("Verified fact for the role, degree, or project heading.", max: 128),
+            "metadata_fact_ids": factIDArray("Verified facts for the organization, location, or dates."),
+            "bullet_fact_ids": factIDArray("Verified achievements or supporting details, in priority order.")
+        ]
+    ]
+    private static let sectionSchema: [String: Any] = [
+        "type": "object", "additionalProperties": false, "required": ["category"],
+        "properties": [
+            "category": ["type": "string", "enum": bodyCategories],
+            "fact_ids": factIDArray("Standalone facts for this section, in display order."),
+            "entries": [
+                "type": "array", "maxItems": maxFactIDs, "items": entrySchema,
+                "description": "Use for work experience, education, and projects with explicit headings and details."
+            ]
+        ]
+    ]
 
     static let catalog: [[String: Any]] = [
         tool(
@@ -56,18 +77,28 @@ struct CVTools {
         tool(
             "generate_cv", title: "Generate a Typst CV",
             description: """
-            Render a standalone .typ résumé from verified facts in a single source. Use fact IDs returned by
-            search_facts in the desired order. With filename, save to the app's exports folder.
-            Omit filename to preview the Typst source. Existing exports are preserved.
+            Compose a professional, standalone .typ résumé from verified facts in one PDF. Select relevant facts
+            with search_facts. Optionally use sections to group jobs, degrees, and projects with their original
+            dates and achievements. Supply every selected ID in fact_ids; identity and contact facts appear in
+            the header automatically. Provide filename to save; omit it to return Typst source only.
             """,
             properties: [
-                "fact_ids": [
-                    "type": "array", "minItems": 1, "maxItems": maxFactIDs, "uniqueItems": true,
-                    "items": string("A verified fact ID.", max: 128)
-                ],
+                "fact_ids": factIDArray("All selected facts in display order if sections is omitted.", required: true),
                 "language": [
                     "type": "string", "enum": CVLanguage.allCases.map(\.rawValue),
                     "description": "Language of default section headings, default fr. Fact text is preserved."
+                ],
+                "template": [
+                    "type": "string", "enum": CVTemplate.allCases.map(\.rawValue),
+                    "description": "editorial (default) for a modern, restrained design; classic for a sober monochrome CV."
+                ],
+                "paper": [
+                    "type": "string", "enum": CVPaper.allCases.map(\.rawValue),
+                    "description": "a4 (default) or letter."
+                ],
+                "sections": [
+                    "type": "array", "maxItems": bodyCategories.count, "items": sectionSchema,
+                    "description": "Optional ordered layout. Include every selected non-header fact once, in its original category."
                 ],
                 "section_labels": [
                     "type": "object", "additionalProperties": false,
@@ -179,20 +210,11 @@ struct CVTools {
     }
 
     private func generateCV(_ args: [String: Any]) throws -> [String: Any] {
-        guard let ids = args["fact_ids"] as? [String], (1...Self.maxFactIDs).contains(ids.count),
-              ids.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.count <= 128 }),
-              Set(ids).count == ids.count else {
-            throw ToolArgumentError("fact_ids must contain 1–\(Self.maxFactIDs) distinct fact IDs.")
-        }
-        let language: CVLanguage
-        if let raw = args["language"] {
-            guard let value = raw as? String, let selected = CVLanguage(rawValue: value) else {
-                throw ToolArgumentError("language must be fr or en.")
-            }
-            language = selected
-        } else {
-            language = .fr
-        }
+        let ids = try Self.readFactIDs(args, "fact_ids", required: true)
+        let language = try Self.readChoice(args, "language", default: CVLanguage.fr)
+        let template = try Self.readChoice(args, "template", default: CVTemplate.editorial)
+        let paper = try Self.readChoice(args, "paper", default: CVPaper.a4)
+        let sections = try Self.readSections(args, available: Set(ids))
         var labels: [FactCategory: String] = [:]
         if let raw = args["section_labels"] {
             guard let supplied = raw as? [String: Any] else {
@@ -219,8 +241,14 @@ struct CVTools {
             throw ToolArgumentError("Select verified facts. Review pending facts in the macOS app.")
         }
 
-        let typst = try CVExporter.generate(facts: facts, labels: labels, language: language, title: title)
-        var reply: [String: Any] = ["typst": typst, "source_id": sourceID, "fact_ids": ids]
+        let typst = try CVExporter.generate(
+            facts: facts, labels: labels, language: language, title: title,
+            template: template, paper: paper, sections: sections
+        )
+        var reply: [String: Any] = [
+            "typst": typst, "source_id": sourceID, "fact_ids": ids,
+            "template": template.rawValue, "paper": paper.rawValue
+        ]
         if let filename {
             reply["path"] = try CVExporter.save(typst: typst, name: filename).path
         }
@@ -246,6 +274,79 @@ struct CVTools {
 
     private static func string(_ description: String, max: Int) -> [String: Any] {
         ["type": "string", "description": description, "maxLength": max]
+    }
+
+    private static func factIDArray(_ description: String, required: Bool = false) -> [String: Any] {
+        [
+            "type": "array", "minItems": required ? 1 : 0, "maxItems": maxFactIDs, "uniqueItems": true,
+            "items": factID, "description": description
+        ]
+    }
+
+    private static func readFactIDs(_ args: [String: Any], _ key: String, required: Bool = false) throws -> [String] {
+        if !required, args[key] == nil { return [] }
+        guard let values = args[key] as? [String],
+              ((required ? 1 : 0)...maxFactIDs).contains(values.count),
+              values.allSatisfy({ $0.count <= 128 && !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+              Set(values).count == values.count else {
+            throw ToolArgumentError("\(key) must contain \(required ? 1 : 0)–\(maxFactIDs) distinct fact IDs.")
+        }
+        return values
+    }
+
+    private static func readChoice<T: RawRepresentable & CaseIterable>(
+        _ args: [String: Any], _ key: String, default fallback: T
+    ) throws -> T where T.RawValue == String {
+        guard let raw = args[key] else { return fallback }
+        guard let value = raw as? String, let choice = T(rawValue: value) else {
+            throw ToolArgumentError("\(key) must be one of: \(T.allCases.map(\.rawValue).joined(separator: ", ")).")
+        }
+        return choice
+    }
+
+    private static func readSections(_ args: [String: Any], available: Set<String>) throws -> [CVSection]? {
+        guard let raw = args["sections"] else { return nil }
+        guard let sections = raw as? [[String: Any]], sections.count <= bodyCategories.count else {
+            throw ToolArgumentError("sections must be an array of section objects.")
+        }
+        var used = Set<String>()
+        func record(_ ids: [String]) throws {
+            for id in ids {
+                guard available.contains(id) else {
+                    throw ToolArgumentError("Every section fact ID must be selected in the top-level fact_ids.")
+                }
+                guard used.insert(id).inserted else {
+                    throw ToolArgumentError("A selected fact can appear only once in sections.")
+                }
+            }
+        }
+
+        return try sections.map { section in
+            guard Set(section.keys).isSubset(of: ["category", "fact_ids", "entries"]),
+                  let name = section["category"] as? String, bodyCategories.contains(name),
+                  let category = FactCategory(rawValue: name) else {
+                throw ToolArgumentError("Use a valid body category and only category, fact_ids, or entries in sections.")
+            }
+            let factIDs = try readFactIDs(section, "fact_ids")
+            try record(factIDs)
+            var entries: [CVEntry] = []
+            if let rawEntries = section["entries"] {
+                guard let items = rawEntries as? [[String: Any]], items.count <= maxFactIDs else {
+                    throw ToolArgumentError("entries must be an array of entry objects.")
+                }
+                for item in items {
+                    guard Set(item.keys).isSubset(of: ["heading_fact_id", "metadata_fact_ids", "bullet_fact_ids"]),
+                          let heading = try readString(item, "heading_fact_id", max: 128, required: true) else {
+                        throw ToolArgumentError("An entry requires heading_fact_id and accepts metadata_fact_ids and bullet_fact_ids.")
+                    }
+                    let metadata = try readFactIDs(item, "metadata_fact_ids")
+                    let bullets = try readFactIDs(item, "bullet_fact_ids")
+                    try record([heading] + metadata + bullets)
+                    entries.append(CVEntry(headingFactID: heading, metadataFactIDs: metadata, bulletFactIDs: bullets))
+                }
+            }
+            return CVSection(category: category, factIDs: factIDs, entries: entries)
+        }
     }
 
     private static func integer(

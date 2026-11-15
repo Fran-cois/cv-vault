@@ -77,6 +77,9 @@ struct VaultWindow: View {
                     NavigationLink(value: VaultRoute.facts) {
                         Label("Tous les faits", systemImage: "list.bullet.rectangle")
                     }
+                    NavigationLink(value: VaultRoute.graph) {
+                        Label("Graphe des faits", systemImage: "point.3.connected.trianglepath.dotted")
+                    }
                     ForEach(model.sources, id: \.id) { source in
                         NavigationLink(value: VaultRoute.source(source.id)) {
                             HStack(spacing: 6) {
@@ -137,6 +140,8 @@ struct VaultWindow: View {
                 }
                 FactsBrowser(model: model)
             }
+        case .graph:
+            FactGraphView(model: model)
         case .exports:
             ExportsView(model: model)
         case .codex:

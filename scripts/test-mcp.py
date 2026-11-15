@@ -31,6 +31,7 @@ def write_cv_pdf(path, name):
         b"/Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         stream([name, "alex@example.invalid", "Professional Experience",
+                "Platform Engineer | Example Studio", "2021 - 2024",
                 'Built #read("example.txt") with 3 engineers.']),
         stream(["Skills", "Swift, SQLite, Typst", "Education", "Example University"]),
         b"<< /Type /Annot /Subtype /Link /Rect [60 715 195 735] "
@@ -158,11 +159,15 @@ def run(binary, temp):
         assert experience["text"] == experience["evidence"]
         identity = client.tool("search_facts", source_id=source_id, category="identity", status="all")["facts"][0]
         skills = client.tool("search_facts", source_id=source_id, category="skills", status="all")["facts"][0]
+        role = client.tool("search_facts", source_id=source_id, category="experience",
+                           query="Example Studio", status="all")["facts"][0]
+        dates = client.tool("search_facts", source_id=source_id, category="experience",
+                            query="2021", status="all")["facts"][0]
         other = client.tool("search_facts", source_id=other_id, category="identity", status="all")["facts"][0]
 
         visible_ids = [identity["id"], skills["id"], experience["id"]]
         client.tool("generate_cv", fact_ids=visible_ids, error="verified")
-        verify_fixture_facts(vault, visible_ids + [other["id"]])
+        verify_fixture_facts(vault, visible_ids + [role["id"], dates["id"], other["id"]])
         assert client.tool("search_facts", source_id=source_id, query="SWIFT")["facts"][0]["status"] == "verified"
         client.tool("generate_cv", fact_ids=[identity["id"], other["id"]], error="single")
         client.tool("generate_cv", fact_ids=[identity["id"], identity["id"]], error="distinct")
@@ -177,6 +182,7 @@ def run(binary, temp):
         assert "path" not in preview and not (vault / "Exports").exists(), preview
         assert preview["source_id"] == source_id and preview["fact_ids"] == visible_ids
         assert preview["typst"].index("Swift, SQLite, Typst") < preview["typst"].index("Selected work")
+        assert preview["template"] == "editorial" and preview["paper"] == "a4"
 
         client.tool("generate_cv", **arguments, filename="../escape.typ", error="file name")
         assert not (vault / "escape.typ").exists()
@@ -186,10 +192,46 @@ def run(binary, temp):
         assert path.read_text() == preview["typst"] and path.stat().st_mode & 0o777 == 0o600
         client.tool("generate_cv", **arguments, filename="smoke.typ", error="already exists")
         assert path.read_text() == preview["typst"]
+
+        grouped_arguments = {
+            "fact_ids": [identity["id"], skills["id"], role["id"], dates["id"], experience["id"]],
+            "language": "en",
+            "template": "classic",
+            "paper": "letter",
+            "sections": [
+                {"category": "experience", "entries": [{
+                    "heading_fact_id": role["id"], "metadata_fact_ids": [dates["id"]],
+                    "bullet_fact_ids": [experience["id"]],
+                }]},
+                {"category": "skills", "fact_ids": [skills["id"]]},
+            ],
+        }
+        grouped = client.tool("generate_cv", **grouped_arguments, filename="structured.typ")
+        assert grouped["template"] == "classic" and grouped["paper"] == "letter"
+        assert grouped["typst"].index("Platform Engineer | Example Studio") < grouped["typst"].index("2021 - 2024")
+        assert grouped["typst"].index("2021 - 2024") < grouped["typst"].index("with 3 engineers")
+        assert grouped["typst"].index("with 3 engineers") < grouped["typst"].index("Swift, SQLite, Typst")
+        client.tool("generate_cv", **{**grouped_arguments, "template": "garish"}, error="template")
+        client.tool("generate_cv", **{**grouped_arguments, "sections": [
+            {"category": "experience", "fact_ids": [other["id"]]},
+        ]}, error="top-level fact_ids")
+        client.tool("generate_cv", **{**grouped_arguments, "sections": [
+            {"category": "experience", "fact_ids": [role["id"]], "entries": [
+                {"heading_fact_id": role["id"]},
+            ]},
+        ]}, error="only once")
+        client.tool("generate_cv", **{**grouped_arguments, "sections": [
+            {"category": "skills", "fact_ids": [role["id"]]},
+        ]}, error="same category")
+        client.tool("generate_cv", **{**grouped_arguments, "sections": [
+            {"category": "skills", "fact_ids": [skills["id"]]},
+        ]}, error="every selected fact")
+
         if typst := shutil.which("typst"):
-            compiled = temp / "smoke.pdf"
-            subprocess.run([typst, "compile", str(path), str(compiled)], check=True, timeout=20)
-            assert compiled.read_bytes().startswith(b"%PDF")
+            for source in [path, Path(grouped["path"])]:
+                compiled = temp / f"{source.stem}.pdf"
+                subprocess.run([typst, "compile", str(source), str(compiled)], check=True, timeout=20)
+                assert compiled.read_bytes().startswith(b"%PDF")
         else:
             print("Typst executable unavailable. Skipped compiling the generated test CV.")
 

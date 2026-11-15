@@ -6,6 +6,7 @@ struct SourceView: View {
     @ObservedObject var model: VaultModel
     let source: CVSource
     @State private var tab = Tab.facts
+    @State private var initialPage = 1
     @State private var showDelete = false
     @State private var showVerifyAll = false
 
@@ -79,14 +80,21 @@ struct SourceView: View {
             switch tab {
             case .facts: FactsBrowser(model: model, sourceID: source.id)
             case .text: ExtractedPages(model: model, source: source)
-            case .original: OriginalPDF(model: model, sourceID: source.id)
+            case .original: OriginalPDF(model: model, sourceID: source.id, initialPage: initialPage)
             }
         }
         .confirmationDialog("Supprimer ce PDF de la bibliothèque ?", isPresented: $showDelete, titleVisibility: .visible) {
             Button("Supprimer le PDF et ses faits", role: .destructive) { model.delete(source) }
             Button("Annuler", role: .cancel) {}
         } message: {
-            Text("La copie intégrée et ses faits seront retirés de la base. Le fichier d’origine et les exports Typst seront conservés.")
+            Text("La copie intégrée et ses faits seront retirés de la base. Le fichier d’origine et les CV exportés seront conservés.")
+        }
+        .onAppear {
+            if let request = model.originalPageRequest, request.sourceID == source.id {
+                model.originalPageRequest = nil
+                initialPage = request.page
+                tab = .original
+            }
         }
     }
 
@@ -177,13 +185,14 @@ private struct ExtractedPage: View {
 private struct OriginalPDF: View {
     @ObservedObject var model: VaultModel
     let sourceID: String
+    let initialPage: Int
     @State private var document: PDFDocument?
     @State private var loading = true
 
     var body: some View {
         Group {
             if let document {
-                PDFPreview(document: document)
+                PDFPreview(document: document, initialPage: initialPage)
                     .frame(height: 590)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .vaultPanel()
@@ -208,8 +217,9 @@ private struct OriginalPDF: View {
     }
 }
 
-private struct PDFPreview: NSViewRepresentable {
+struct PDFPreview: NSViewRepresentable {
     let document: PDFDocument
+    var initialPage = 1
 
     func makeNSView(context: Context) -> PDFView {
         let view = PDFView()
@@ -221,6 +231,10 @@ private struct PDFPreview: NSViewRepresentable {
     }
 
     func updateNSView(_ view: PDFView, context: Context) {
-        if view.document !== document { view.document = document }
+        guard view.document !== document else { return }
+        view.document = document
+        if initialPage > 1, let page = document.page(at: initialPage - 1) {
+            view.go(to: page)
+        }
     }
 }

@@ -1,8 +1,8 @@
 # CV Vault
 
-App macOS native pour transformer un CV PDF en base de connaissances locale et composer des CV Typst avec Codex.
+App macOS native pour transformer un CV PDF en base de connaissances locale, explorer ses faits en graphe et composer des CV Typst avec Codex.
 
-**Importer un PDF → vérifier les faits → sélectionner les éléments d’un CV → exporter un `.typ`.**
+**Importer un PDF → explorer et vérifier les faits → composer un CV → exporter en Typst ou PDF.**
 
 ## Démarrage
 
@@ -22,7 +22,10 @@ L’archive du projet n’est pas notariée par Apple. Si macOS bloque son ouver
 
 1. Cliquez sur **Importer un PDF** et sélectionnez votre CV.
 2. Dans **Faits**, comparez les propositions au texte source. Corrigez le texte ou la catégorie, puis vérifiez ou écartez les éléments. Les faits vérifiés restent reliés à leur page et à leur extrait d’origine.
-3. Exportez un CV depuis l’app ou composez une variante avec Codex. Le fichier `.typ` est autonome et modifiable. Si vous voulez un PDF, installez [Typst](https://github.com/typst/typst) et lancez `typst compile "Mon CV.typ"`.
+3. Ouvrez **Graphe des faits** pour parcourir les liens entre PDF, rubriques et faits. Zoomez ou filtrez par source, rubrique ou statut, puis sélectionnez un fait pour lire son texte, son extrait d’origine et ouvrir la page correspondante.
+4. Dans **CV Typst**, sélectionnez vos faits vérifiés, le format A4 ou US Letter et le modèle **Éditorial** (accent discret) ou **Classique** (monochrome). Exportez un fichier `.typ` autonome et modifiable. Avec [Typst](https://github.com/typst/typst) installé, vous pouvez également prévisualiser le CV, vérifier son nombre de pages et enregistrer le PDF dans l’app.
+
+Deux exemples générés avec un CV fictif : [Éditorial (PDF)](https://github.com/Fran-cois/cv-vault/releases/download/v0.2.0/CV-fictif-editorial.pdf) · [Classique (PDF)](https://github.com/Fran-cois/cv-vault/releases/download/v0.2.0/CV-fictif-classic.pdf).
 
 L’import combine le texte intégré au PDF et la reconnaissance locale de Vision pour les pages scannées. Il conserve l’original, le texte extrait par page et les liens détectés. Le classement automatique couvre les rubriques courantes des CV français et anglais, ainsi que les informations sans rubrique reconnue. Une mise en page complexe ou un scan de mauvaise qualité peut fausser l’ordre des lignes et la reconnaissance : consultez le PDF en cas de doute. L’app signale les pages qu’elle n’a pas pu lire. Chaque PDF est limité à 50 Mio et 100 pages.
 
@@ -39,20 +42,22 @@ Le serveur s’exécute en local sur STDIO, même quand l’app est fermée. Apr
 
 Exemple de demande :
 
-> Avec CV Vault, prépare un CV pour un poste de lead data. Choisis les faits vérifiés qui démontrent le mieux mon expérience pour ce poste. Garde les dates et chiffres d’origine, puis exporte un fichier Typst nommé « CV Lead Data ».
+> Avec CV Vault, prépare un CV pour un poste de Lead Data, modèle Éditorial en A4. Choisis les faits vérifiés les plus pertinents d’un même PDF. Pour chaque poste, groupe le titre, les dates et les réalisations attestées ; place les résultats chiffrés les plus utiles en premier. Exporte un fichier Typst nommé « CV Lead Data ».
 
 | Outil MCP | Usage |
 | --- | --- |
 | `list_sources` | Lister les PDF et leur état d’extraction. |
 | `get_source` | Lire le texte et les liens d’un groupe de pages. |
 | `search_facts` | Chercher dans la base par texte, rubrique, source ou statut. |
-| `generate_cv` | Composer un `.typ` à partir d’une liste ordonnée d’identifiants de faits vérifiés d’un même PDF, et l’enregistrer si un nom de fichier est fourni. |
+| `generate_cv` | Composer un `.typ` à partir de faits vérifiés d’un même PDF, choisir le modèle et le format, et l’enregistrer si un nom de fichier est fourni. |
+
+Pour structurer un CV via MCP, passez `fact_ids` et une liste ordonnée `sections`. Dans une expérience, une formation ou un projet, une entrée peut référencer `heading_fact_id`, `metadata_fact_ids` et `bullet_fact_ids`. Chaque fait de corps sélectionné doit être utilisé une seule fois, dans sa rubrique. Les faits d’identité et de contact sont placés dans l’en-tête automatiquement. Les modèles sont `editorial` et `classic` ; les formats sont `a4` et `letter`.
 
 Le choix `fr` ou `en` règle les titres de rubrique et la typographie ; le texte des faits reste dans sa langue d’origine. Le serveur permet de lire les sources et de générer des exports. La validation et la modification des faits restent dans l’app.
 
 ## Données locales
 
-Par défaut, l’app et le serveur partagent `~/Library/Application Support/CV Vault/`. La base `knowledge.sqlite3` contient les PDF originaux, les pages et les faits ; `Exports/` contient les fichiers Typst. Les PDF identiques sont détectés par leur empreinte SHA-256. Supprimer une source dans la bibliothèque supprime les pages et faits associés ; les exports déjà créés restent disponibles.
+Par défaut, l’app et le serveur partagent `~/Library/Application Support/CV Vault/`. La base `knowledge.sqlite3` contient les PDF originaux, les pages et les faits ; `Exports/` contient les CV exportés en Typst ou PDF. Les PDF identiques sont détectés par leur empreinte SHA-256. Supprimer une source dans la bibliothèque supprime les pages et faits associés ; les exports déjà créés restent disponibles.
 
 CV Vault ne fait aucun appel à un service externe et ne demande ni compte ni clé API. Quand vous demandez à Codex de consulter la base, le résultat des outils MCP peut contenir des informations personnelles et fait partie du contexte de la session Codex. Les fichiers SQLite et Typst ne sont pas chiffrés par CV Vault.
 

@@ -45,14 +45,14 @@ struct CodexView: View {
                     Divider().padding(.leading, 49)
                     toolRow("search_facts", "Trouver des faits et leurs preuves", symbol: "magnifyingglass")
                     Divider().padding(.leading, 49)
-                    toolRow("generate_cv", "Générer et enregistrer un CV Typst", symbol: "arrow.down.doc")
+                    toolRow("generate_cv", "Composer un CV Typst avec le modèle et les rubriques choisis", symbol: "arrow.down.doc")
                 }
                 .vaultPanel()
             }
 
             VStack(alignment: .leading, spacing: 10) {
                 SectionTitle(title: "À essayer dans Codex", symbol: "text.bubble")
-                codeBlock("Crée un CV Typst en français pour un poste de [poste]. Garde les faits validés les plus pertinents d’une seule source, place les plus convaincants en premier et enregistre le fichier en cv-cible.typ.", key: "prompt", monospace: false)
+                codeBlock("Crée un CV Typst en français pour un poste de [poste], modèle Éditorial sur A4. Sélectionne les faits validés d’un même PDF. Regroupe chaque expérience par poste avec les dates et réalisations attestées, puis enregistre le résultat en cv-cible.typ.", key: "prompt", monospace: false)
             }
         }
         .task(id: copied) {

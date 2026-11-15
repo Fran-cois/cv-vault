@@ -17,7 +17,7 @@ struct CVVaultApp: App {
 }
 
 enum VaultRoute: Hashable {
-    case overview, facts, exports, codex
+    case overview, facts, graph, exports, codex
     case source(String)
 }
 
@@ -39,6 +39,7 @@ final class VaultModel: ObservableObject {
     @Published var notice: VaultNotice?
     @Published var errorMessage: String?
     @Published var exportSourceID: String?
+    var originalPageRequest: (sourceID: String, page: Int)?
     private var database: KnowledgeBase?
 
     func start() {
@@ -75,7 +76,7 @@ final class VaultModel: ObservableObject {
             options: [.skipsHiddenFiles]
         )) ?? []
         let candidates = files.compactMap { url -> (URL, Date)? in
-            guard url.pathExtension.lowercased() == "typ",
+            guard ["typ", "pdf"].contains(url.pathExtension.lowercased()),
                   let attributes = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                   attributes.isRegularFile == true else { return nil }
             return (url, attributes.contentModificationDate ?? .distantPast)
@@ -166,6 +167,11 @@ final class VaultModel: ObservableObject {
     func openExports(for sourceID: String? = nil) {
         exportSourceID = sourceID
         route = .exports
+    }
+
+    func openOriginal(of sourceID: String, page: Int = 1) {
+        originalPageRequest = (sourceID, page)
+        route = .source(sourceID)
     }
 
     func revealDatabase() {

@@ -1,24 +1,31 @@
 import AppKit
 import CVVaultCore
+import PDFKit
 import SwiftUI
 
 struct ExportsView: View {
     @ObservedObject var model: VaultModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var sourceID: String?
     @State private var availableFacts: [CVFact] = []
     @State private var selectedIDs: Set<String> = []
     @State private var loadedSourceID: String?
     @State private var loading = false
     @State private var language = CVLanguage.fr
+    @State private var template = CVTemplate.editorial
+    @State private var paper = CVPaper.a4
     @State private var title = ""
     @State private var filename = ""
     @State private var proposedName = Self.makeFilename()
     @State private var editingSelection = false
     @State private var created: URL?
+    @State private var hasTypst = false
+    @State private var request: RenderRequest?
+    @State private var preview: ExportPreview?
 
     var body: some View {
         VaultPage {
-            PageTitle(title: "CV Typst", subtitle: "Composez un CV à partir des faits validés d’un PDF.") {
+            PageTitle(title: "CV Typst", subtitle: "Composez et prévisualisez votre CV à partir des faits validés.") {
                 if !model.exports.isEmpty {
                     Button("Ouvrir le dossier", systemImage: "folder") { model.revealExports() }
                 }
@@ -53,18 +60,35 @@ struct ExportsView: View {
                 }
             }
         }
-        .onAppear { model.refreshExports() }
+        .onAppear {
+            model.refreshExports()
+            detectTypst()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { detectTypst() }
+        }
         .onChange(of: model.sources, initial: true) { _, sources in
             guard sourceID == nil || !sources.contains(where: { $0.id == sourceID }) else { return }
             let requested = sources.first { $0.id == model.exportSourceID }
             sourceID = requested?.id ?? sources.first(where: { $0.verifiedFactCount > 0 })?.id ?? sources.first?.id
         }
         .task(id: LoadRequest(id: sourceID, revision: model.revision)) { await loadFacts() }
+        .task(id: request?.id) {
+            if let request { await render(request) }
+        }
+        .sheet(item: $preview) { draft in
+            ExportPDFSheet(preview: draft) { name in
+                try finishExport(CVExporter.save(pdf: draft.pdf, name: name))
+            }
+        }
     }
 
     private var exportForm: some View {
         VStack(alignment: .leading, spacing: 13) {
             SectionTitle(title: "Nouvel export", symbol: "doc.badge.plus")
+            templatePicker
+
+            Divider()
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                 GridRow {
                     Text("PDF source").foregroundStyle(.secondary)
@@ -76,6 +100,16 @@ struct ExportsView: View {
                     }
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                GridRow {
+                    Text("Format").foregroundStyle(.secondary)
+                    Picker("Format papier", selection: $paper) {
+                        Text("A4").tag(CVPaper.a4)
+                        Text("US Letter").tag(CVPaper.letter)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 180)
                 }
                 GridRow {
                     Text("Langue").foregroundStyle(.secondary)
@@ -97,9 +131,10 @@ struct ExportsView: View {
                     Text("Nom du fichier").foregroundStyle(.secondary)
                     TextField(proposedName, text: $filename)
                         .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Nom du fichier Typst")
+                        .accessibilityLabel("Nom du fichier")
                 }
             }
+            .disabled(request != nil)
 
             Divider()
             if loading {
@@ -117,30 +152,70 @@ struct ExportsView: View {
                 }
             } else if !availableFacts.isEmpty {
                 factPicker
+                    .disabled(request != nil)
             }
 
-            HStack {
-                if let created {
-                    Button("\(created.lastPathComponent) créé", systemImage: "checkmark.circle.fill") { reveal(created) }
-                        .buttonStyle(.link)
+            exportActions
+
+            if !hasTypst {
+                HStack(spacing: 7) {
+                    Image(systemName: "info.circle").accessibilityHidden(true)
+                    Text("Typst est requis pour l’aperçu et l’enregistrement PDF.")
+                    Link("Installer Typst", destination: TypstPDFCompiler.installationURL)
+                    Button("Détecter") { detectTypst() }.buttonStyle(.link)
                 }
-                Spacer()
-                Button {
-                    exportCV()
-                } label: {
-                    Label("Générer le .typ", systemImage: "arrow.down.doc")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(selectedIDs.isEmpty || loading || sourceID != loadedSourceID)
+                .foregroundStyle(.secondary)
+                .font(.caption)
             }
         }
         .padding(17)
         .vaultPanel()
     }
 
+    private var templatePicker: some View {
+        HStack(spacing: 9) {
+            TemplateChoice(
+                title: "Éditorial", caption: "Titres accentués, lecture rapide.",
+                template: .editorial, selection: $template
+            )
+            TemplateChoice(
+                title: "Classique", caption: "Noir et blanc, typographie sobre.",
+                template: .classic, selection: $template
+            )
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Modèle de CV")
+        .disabled(request != nil)
+    }
+
+    private var exportActions: some View {
+        HStack(spacing: 10) {
+            if let request {
+                ProgressView().controlSize(.small)
+                Text(request.output == .pdf ? "Compilation PDF…" : "Génération Typst…")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            } else if let created {
+                Button("\(created.lastPathComponent) créé", systemImage: "checkmark.circle.fill") { reveal(created) }
+                    .buttonStyle(.link)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button("Générer le .typ", systemImage: "arrow.down.doc") { prepare(.typst) }
+                .disabled(!canExport)
+            Button("Aperçu PDF", systemImage: "eye") { prepare(.pdf) }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canExport || !hasTypst)
+        }
+    }
+
+    private var canExport: Bool {
+        request == nil && !selectedIDs.isEmpty && !loading && sourceID == loadedSourceID
+    }
+
     private var factPicker: some View {
         DisclosureGroup(isExpanded: $editingSelection) {
-            VStack(alignment: .leading, spacing: 9) {
+            LazyVStack(alignment: .leading, spacing: 9) {
                 Button(selectedIDs.isEmpty ? "Tout sélectionner" : "Tout désélectionner") {
                     selectedIDs = selectedIDs.isEmpty ? Set(availableFacts.map(\.id)) : []
                 }
@@ -174,7 +249,7 @@ struct ExportsView: View {
 
     private func exportRow(_ url: URL) -> some View {
         HStack(spacing: 10) {
-            VaultIcon(symbol: "doc.text", size: 28)
+            VaultIcon(symbol: url.pathExtension == "pdf" ? "doc.richtext" : "doc.text", size: 28)
             Text(url.lastPathComponent)
                 .font(.system(.body, design: .monospaced))
                 .lineLimit(1)
@@ -185,7 +260,7 @@ struct ExportsView: View {
                 .help("Afficher dans le Finder")
             Button("Ouvrir", systemImage: "arrow.up.right.square") { NSWorkspace.shared.open(url) }
                 .labelStyle(.iconOnly)
-                .help("Ouvrir le fichier Typst")
+                .help("Ouvrir le fichier")
         }
         .padding(11)
     }
@@ -229,23 +304,55 @@ struct ExportsView: View {
         }
     }
 
-    private func exportCV() {
+    private func detectTypst() {
+        hasTypst = TypstPDFCompiler.executable() != nil
+    }
+
+    private func prepare(_ output: RenderRequest.Output) {
+        guard canExport, let sourceID else { return }
+        var name = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.lowercased().hasSuffix(".typ") || name.lowercased().hasSuffix(".pdf") {
+            name.removeLast(4)
+        }
+        request = RenderRequest(
+            sourceID: sourceID,
+            factIDs: availableFacts.filter { selectedIDs.contains($0.id) }.map(\.id),
+            language: language, template: template, paper: paper, title: title,
+            name: name.isEmpty ? proposedName : name, output: output
+        )
+    }
+
+    private func render(_ job: RenderRequest) async {
+        defer {
+            if request?.id == job.id { request = nil }
+        }
         do {
             let database = try model.requireDatabase()
-            let facts = try availableFacts.filter { selectedIDs.contains($0.id) }.map { fact in
-                guard let current = try database.fact(id: fact.id) else { throw ExportUIError.factRemoved }
-                return current
+            let result = try await Task.detached(priority: .userInitiated) {
+                try job.run(with: database)
+            }.value
+            try Task.checkCancellation()
+            switch result {
+            case .saved(let url):
+                finishExport(url)
+            case .preview(let pdf):
+                guard let document = PDFDocument(data: pdf), document.pageCount > 0 else {
+                    throw TypstPDFCompiler.Failure.emptyPDF
+                }
+                preview = ExportPreview(pdf: pdf, document: document, name: job.name)
             }
-            let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            let typst = try CVExporter.generate(facts: facts, language: language, title: trimmedTitle.isEmpty ? nil : trimmedTitle)
-            let name = filename.trimmingCharacters(in: .whitespacesAndNewlines)
-            created = try CVExporter.save(typst: typst, name: name.isEmpty ? proposedName : name)
-            filename = ""
-            proposedName = Self.makeFilename()
-            try model.refresh()
         } catch {
+            guard !Task.isCancelled else { return }
+            detectTypst()
             model.errorMessage = error.localizedDescription
         }
+    }
+
+    private func finishExport(_ url: URL) {
+        created = url
+        filename = ""
+        proposedName = Self.makeFilename()
+        model.refreshExports()
     }
 
     private func reveal(_ url: URL) {
@@ -256,7 +363,7 @@ struct ExportsView: View {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
-        return "cv-\(formatter.string(from: Date())).typ"
+        return "cv-\(formatter.string(from: Date()))"
     }
 
     private struct LoadRequest: Hashable {
@@ -264,11 +371,164 @@ struct ExportsView: View {
         let revision: Int
     }
 
-    private enum ExportUIError: LocalizedError {
-        case factRemoved
+    private struct RenderRequest: Sendable {
+        enum Output: Sendable { case typst, pdf }
+        enum Result: Sendable { case saved(URL), preview(Data) }
 
-        var errorDescription: String? {
-            "Un des faits sélectionnés a été supprimé. Actualisez la base, puis réessayez."
+        let id = UUID()
+        let sourceID: String
+        let factIDs: [String]
+        let language: CVLanguage
+        let template: CVTemplate
+        let paper: CVPaper
+        let title: String
+        let name: String
+        let output: Output
+
+        func run(with database: KnowledgeBase) throws -> Result {
+            var facts: [CVFact] = []
+            for offset in stride(from: 0, to: factIDs.count, by: 500) {
+                let ids = Array(factIDs[offset..<min(offset + 500, factIDs.count)])
+                let batch = try database.facts(ids: ids)
+                guard batch.map(\.id) == ids,
+                      batch.allSatisfy({ $0.sourceID == sourceID && $0.status == .verified }) else {
+                    throw SelectionChanged()
+                }
+                facts.append(contentsOf: batch)
+            }
+            let typst = try CVExporter.generate(facts: facts, language: language, title: title, template: template, paper: paper)
+            switch output {
+            case .typst: return .saved(try CVExporter.save(typst: typst, name: name))
+            case .pdf: return .preview(try TypstPDFCompiler.compile(typst))
+            }
         }
+    }
+
+    private struct SelectionChanged: LocalizedError {
+        var errorDescription: String? {
+            "Les faits sélectionnés ont changé. Actualisez la base, puis réessayez."
+        }
+    }
+}
+
+private struct ExportPreview: Identifiable {
+    let id = UUID()
+    let pdf: Data
+    let document: PDFDocument
+    let name: String
+}
+
+private struct ExportPDFSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var saveError: String?
+    let preview: ExportPreview
+    let save: (String) throws -> Void
+
+    init(preview: ExportPreview, save: @escaping (String) throws -> Void) {
+        self.preview = preview
+        self.save = save
+        _name = State(initialValue: preview.name)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Aperçu PDF").font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                Label(formattedCount(preview.document.pageCount, "page", "pages"), systemImage: "doc.on.doc")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(13)
+            Divider()
+            PDFPreview(document: preview.document)
+                .accessibilityLabel("Aperçu du CV")
+            Divider()
+            HStack(spacing: 10) {
+                TextField("Nom du fichier PDF", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 240)
+                Spacer()
+                Button("Fermer", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Enregistrer le PDF", systemImage: "arrow.down.doc") {
+                    do {
+                        try save(name)
+                        dismiss()
+                    } catch {
+                        saveError = error.localizedDescription
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(13)
+        }
+        .frame(minWidth: 585, idealWidth: 680, minHeight: 490, idealHeight: 625)
+        .alert("Enregistrement impossible", isPresented: Binding(
+            get: { saveError != nil }, set: { if !$0 { saveError = nil } }
+        )) {
+            Button("OK", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "")
+        }
+    }
+}
+
+private struct TemplateChoice: View {
+    let title: String
+    let caption: String
+    let template: CVTemplate
+    @Binding var selection: CVTemplate
+
+    private var selected: Bool { selection == template }
+    private var accent: Color { template == .editorial ? Color(red: 0.13, green: 0.33, blue: 0.32) : Color(white: 0.2) }
+
+    var body: some View {
+        Button {
+            selection = template
+        } label: {
+            HStack(spacing: 11) {
+                thumbnail
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.callout.weight(.semibold))
+                    Text(caption).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 2)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? VaultStyle.accent : Color.secondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(
+                selected ? VaultStyle.accent.opacity(0.09) : Color(nsColor: .windowBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(selected ? VaultStyle.accent : VaultStyle.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var thumbnail: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            RoundedRectangle(cornerRadius: 1).fill(accent).frame(width: 15, height: 3)
+            RoundedRectangle(cornerRadius: 1).fill(accent.opacity(0.4)).frame(width: 11, height: 1)
+            Divider().overlay(accent.opacity(0.35))
+            Rectangle().fill(accent).frame(width: 8, height: 1)
+            Rectangle().fill(accent.opacity(0.35)).frame(width: 15, height: 1)
+            Rectangle().fill(accent.opacity(0.35)).frame(width: 11, height: 1)
+        }
+        .padding(5)
+        .frame(width: 30, height: 39, alignment: .topLeading)
+        .background(Color(white: 0.98), in: RoundedRectangle(cornerRadius: 2))
+        .shadow(color: .black.opacity(0.16), radius: 2, y: 1)
+        .accessibilityHidden(true)
     }
 }
