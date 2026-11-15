@@ -15,6 +15,7 @@ struct CVTools {
     private static let maxPages = 10
     private static let maxFacts = 50
     private static let maxFactIDs = 100
+    private static let defaultTemplate = CVTemplate.editorial
     private static let categories = FactCategory.allCases.map(\.rawValue)
     private static let bodyCategories = FactCategory.allCases.filter { $0 != .identity && $0 != .contact }.map(\.rawValue)
     private static let statuses = FactStatus.allCases.map(\.rawValue) + ["all"]
@@ -75,6 +76,16 @@ struct CVTools {
             ]
         ),
         tool(
+            "list_cv_styles", title: "List CV styles",
+            description: "Compare the available CV styles and get their template IDs for generate_cv.",
+            properties: [
+                "language": [
+                    "type": "string", "enum": CVLanguage.allCases.map(\.rawValue), "default": CVLanguage.fr.rawValue,
+                    "description": "Language of style names and descriptions."
+                ]
+            ]
+        ),
+        tool(
             "generate_cv", title: "Generate a Typst CV",
             description: """
             Compose a professional, standalone .typ résumé from verified facts in one PDF. Select relevant facts
@@ -90,7 +101,8 @@ struct CVTools {
                 ],
                 "template": [
                     "type": "string", "enum": CVTemplate.allCases.map(\.rawValue),
-                    "description": "editorial (default) for a modern, restrained design; classic for a sober monochrome CV."
+                    "default": defaultTemplate.rawValue,
+                    "description": "Visual style ID from list_cv_styles. Use the same fact IDs and a different filename to create another style."
                 ],
                 "paper": [
                     "type": "string", "enum": CVPaper.allCases.map(\.rawValue),
@@ -128,6 +140,8 @@ struct CVTools {
                 result = try getSource(arguments)
             case "search_facts":
                 result = try searchFacts(arguments)
+            case "list_cv_styles":
+                result = try Self.listStyles(arguments)
             case "generate_cv":
                 result = try generateCV(arguments)
             default:
@@ -209,10 +223,23 @@ struct CVTools {
         return reply
     }
 
+    private static func listStyles(_ args: [String: Any]) throws -> [String: Any] {
+        let language = try readChoice(args, "language", default: CVLanguage.fr)
+        let styles: [[String: Any]] = CVTemplate.allCases.map { template in
+            [
+                "id": template.rawValue,
+                "name": template.displayName(language: language),
+                "description": template.description(language: language),
+                "default": template == defaultTemplate
+            ]
+        }
+        return ["styles": styles, "default_style": defaultTemplate.rawValue]
+    }
+
     private func generateCV(_ args: [String: Any]) throws -> [String: Any] {
         let ids = try Self.readFactIDs(args, "fact_ids", required: true)
         let language = try Self.readChoice(args, "language", default: CVLanguage.fr)
-        let template = try Self.readChoice(args, "template", default: CVTemplate.editorial)
+        let template = try Self.readChoice(args, "template", default: Self.defaultTemplate)
         let paper = try Self.readChoice(args, "paper", default: CVPaper.a4)
         let sections = try Self.readSections(args, available: Set(ids))
         var labels: [FactCategory: String] = [:]

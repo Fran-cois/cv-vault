@@ -173,19 +173,24 @@ struct ExportsView: View {
     }
 
     private var templatePicker: some View {
-        HStack(spacing: 9) {
-            TemplateChoice(
-                title: "Éditorial", caption: "Titres accentués, lecture rapide.",
-                template: .editorial, selection: $template
-            )
-            TemplateChoice(
-                title: "Classique", caption: "Noir et blanc, typographie sobre.",
-                template: .classic, selection: $template
-            )
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 9) {
+                templateChoices
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3), spacing: 9) {
+                templateChoices
+            }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Modèle de CV")
+        .accessibilityLabel("Style du CV")
         .disabled(request != nil)
+    }
+
+    private var templateChoices: some View {
+        ForEach(CVTemplate.allCases, id: \.self) { style in
+            TemplateChoice(template: style, selection: $template)
+                .frame(minWidth: 155)
+        }
     }
 
     private var exportActions: some View {
@@ -477,30 +482,52 @@ private struct ExportPDFSheet: View {
 }
 
 private struct TemplateChoice: View {
-    let title: String
-    let caption: String
     let template: CVTemplate
     @Binding var selection: CVTemplate
 
     private var selected: Bool { selection == template }
-    private var accent: Color { template == .editorial ? Color(red: 0.13, green: 0.33, blue: 0.32) : Color(white: 0.2) }
+
+    private var accent: Color {
+        switch template {
+        case .editorial: Color(red: 0.08, green: 0.29, blue: 0.36)
+        case .classic: Color(white: 0.16)
+        case .minimal: Color(red: 0.21, green: 0.24, blue: 0.27)
+        case .executive: Color(red: 0.13, green: 0.21, blue: 0.34)
+        case .technical: Color(red: 0.13, green: 0.33, blue: 0.45)
+        }
+    }
+
+    private var caption: String {
+        switch template {
+        case .editorial: "Titres accentués"
+        case .classic: "Noir et blanc"
+        case .minimal: "Sans empattement"
+        case .executive: "Serif bleu marine"
+        case .technical: "Titres monospace"
+        }
+    }
 
     var body: some View {
         Button {
             selection = template
         } label: {
-            HStack(spacing: 11) {
+            HStack(spacing: 8) {
                 thumbnail
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.callout.weight(.semibold))
-                    Text(caption).font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Text(template.displayName(language: .fr)).font(.callout.weight(.semibold))
+                        Spacer(minLength: 0)
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selected ? VaultStyle.accent : Color.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2, reservesSpace: true)
                 }
-                Spacer(minLength: 2)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selected ? VaultStyle.accent : Color.secondary)
-                    .accessibilityHidden(true)
             }
-            .padding(10)
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .background(
@@ -513,15 +540,22 @@ private struct TemplateChoice: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(template.displayName(language: .fr))
+        .accessibilityHint(template.description(language: .fr))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var thumbnail: some View {
         VStack(alignment: .leading, spacing: 3) {
-            RoundedRectangle(cornerRadius: 1).fill(accent).frame(width: 15, height: 3)
-            RoundedRectangle(cornerRadius: 1).fill(accent.opacity(0.4)).frame(width: 11, height: 1)
-            Divider().overlay(accent.opacity(0.35))
-            Rectangle().fill(accent).frame(width: 8, height: 1)
+            VStack(alignment: template == .classic ? .center : .leading, spacing: 2) {
+                RoundedRectangle(cornerRadius: 1).fill(accent).frame(width: 15, height: 3)
+                RoundedRectangle(cornerRadius: 1).fill(accent.opacity(0.4)).frame(width: 11, height: 1)
+            }
+            .frame(maxWidth: .infinity, alignment: template == .classic ? .center : .leading)
+            Rectangle().fill(accent.opacity(template == .minimal ? 0 : 0.55))
+                .frame(width: template == .editorial ? 9 : 20, height: template == .executive ? 2 : 1)
+            Rectangle().fill(accent.opacity(template == .technical ? 0.25 : 1))
+                .frame(width: template == .technical ? 20 : 8, height: template == .technical ? 3 : 1)
             Rectangle().fill(accent.opacity(0.35)).frame(width: 15, height: 1)
             Rectangle().fill(accent.opacity(0.35)).frame(width: 11, height: 1)
         }

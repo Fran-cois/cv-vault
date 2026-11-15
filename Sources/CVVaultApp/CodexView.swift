@@ -45,6 +45,8 @@ struct CodexView: View {
                     Divider().padding(.leading, 49)
                     toolRow("search_facts", "Trouver des faits et leurs preuves", symbol: "magnifyingglass")
                     Divider().padding(.leading, 49)
+                    toolRow("list_cv_styles", "Comparer les styles disponibles", symbol: "square.grid.2x2")
+                    Divider().padding(.leading, 49)
                     toolRow("generate_cv", "Composer un CV Typst avec le modèle et les rubriques choisis", symbol: "arrow.down.doc")
                 }
                 .vaultPanel()
@@ -52,7 +54,7 @@ struct CodexView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 SectionTitle(title: "À essayer dans Codex", symbol: "text.bubble")
-                codeBlock("Crée un CV Typst en français pour un poste de [poste], modèle Éditorial sur A4. Sélectionne les faits validés d’un même PDF. Regroupe chaque expérience par poste avec les dates et réalisations attestées, puis enregistre le résultat en cv-cible.typ.", key: "prompt", monospace: false)
+                codeBlock("Liste les styles CV Vault, puis génère le même CV français pour [poste] en styles Minimaliste et Direction. Garde les mêmes faits validés dans les deux versions et enregistre-les en cv-minimaliste.typ et cv-direction.typ.", key: "prompt", monospace: false)
             }
         }
         .task(id: copied) {

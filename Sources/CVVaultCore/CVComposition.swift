@@ -1,7 +1,47 @@
 import Foundation
 
 public enum CVTemplate: String, CaseIterable, Codable, Sendable {
-    case editorial, classic
+    case editorial, classic, minimal, executive, technical
+
+    public func displayName(language: CVLanguage) -> String {
+        switch (self, language) {
+        case (.editorial, .fr): "Éditorial"
+        case (.editorial, .en): "Editorial"
+        case (.classic, .fr): "Classique"
+        case (.classic, .en): "Classic"
+        case (.minimal, .fr): "Minimaliste"
+        case (.minimal, .en): "Minimal"
+        case (.executive, .fr): "Direction"
+        case (.executive, .en): "Executive"
+        case (.technical, .fr): "Technique"
+        case (.technical, .en): "Technical"
+        }
+    }
+
+    public func description(language: CVLanguage) -> String {
+        switch (self, language) {
+        case (.editorial, .fr):
+            "Grand nom aligné à gauche, corps à empattements et titres bleu pétrole."
+        case (.editorial, .en):
+            "Large left-aligned name, serif body text, and deep teal section headings."
+        case (.classic, .fr):
+            "En-tête centré, typographie à empattements et lignes fines en noir et blanc."
+        case (.classic, .en):
+            "Centered header, serif typography, and fine rules in black and white."
+        case (.minimal, .fr):
+            "Typographie sans empattements, sections compactes et séparation discrète."
+        case (.minimal, .en):
+            "Sans-serif typography, compact sections, and understated dividers."
+        case (.executive, .fr):
+            "En-tête de type papier à lettres, filet bleu marine et titres de poste mis en valeur."
+        case (.executive, .en):
+            "Letterhead layout with a navy rule and prominent role titles."
+        case (.technical, .fr):
+            "Bandeaux de section bleus, titres et dates à chasse fixe."
+        case (.technical, .en):
+            "Blue section bands with monospaced headings and dates."
+        }
+    }
 }
 
 public enum CVPaper: String, CaseIterable, Codable, Sendable {

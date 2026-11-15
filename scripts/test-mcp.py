@@ -12,6 +12,9 @@ import subprocess
 import tempfile
 
 
+STYLES = ("editorial", "classic", "minimal", "executive", "technical")
+
+
 def write_cv_pdf(path, name):
     """Write a small PDF without depending on a PDF library or checking in a binary."""
     def pdf_string(value):
@@ -135,7 +138,19 @@ def run(binary, temp):
         assert client.request("tools/call", {"name": "unrecognized"})["error"]["code"] == -32602
 
         catalog = client.request("tools/list")["result"]["tools"]
-        assert {tool["name"] for tool in catalog} == {"list_sources", "get_source", "search_facts", "generate_cv"}
+        tools = {tool["name"]: tool for tool in catalog}
+        assert tools.keys() == {"list_sources", "get_source", "search_facts", "list_cv_styles", "generate_cv"}
+        selection = tools["generate_cv"]["inputSchema"]["properties"]["template"]
+        assert set(selection["enum"]) == set(STYLES), selection
+        assert client.tool("list_cv_styles")["default_style"] == "editorial"
+        for language in ("fr", "en"):
+            listing = client.tool("list_cv_styles", language=language)
+            styles = listing["styles"]
+            assert len(styles) == len(STYLES) and {style["id"] for style in styles} == set(STYLES), listing
+            assert all(style["name"].strip() and style["description"].strip() for style in styles), listing
+            assert listing["default_style"] == "editorial", listing
+            assert [style["id"] for style in styles if style["default"]] == ["editorial"], listing
+        client.tool("list_cv_styles", language="unsupported", error="language")
         first = client.tool("list_sources", limit=1)
         second = client.tool("list_sources", limit=1, offset=first["next_offset"])
         assert {first["sources"][0]["id"], second["sources"][0]["id"]} == {source_id, other_id}
@@ -183,6 +198,7 @@ def run(binary, temp):
         assert preview["source_id"] == source_id and preview["fact_ids"] == visible_ids
         assert preview["typst"].index("Swift, SQLite, Typst") < preview["typst"].index("Selected work")
         assert preview["template"] == "editorial" and preview["paper"] == "a4"
+        assert client.tool("generate_cv", **arguments, template="editorial") == preview
 
         client.tool("generate_cv", **arguments, filename="../escape.typ", error="file name")
         assert not (vault / "escape.typ").exists()
@@ -227,11 +243,36 @@ def run(binary, temp):
             {"category": "skills", "fact_ids": [skills["id"]]},
         ]}, error="every selected fact")
 
+        layouts = set()
+        sources = [path]
+        for style in STYLES:
+            result = grouped if style == "classic" else client.tool(
+                "generate_cv", **{**grouped_arguments, "template": style}, filename=f"style-{style}.typ"
+            )
+            assert (result["template"], result["paper"]) == (style, "letter")
+            assert result["fact_ids"] == grouped_arguments["fact_ids"] and result["source_id"] == source_id
+            phrases = ("Platform Engineer | Example Studio", "with 3 engineers", "Swift, SQLite, Typst")
+            assert all(phrase in result["typst"] for phrase in phrases)
+            # A style name in a source comment alone does not count as a different layout.
+            layout = "\n".join(line for line in result["typst"].splitlines() if not line.lstrip().startswith("//"))
+            layouts.add(layout)
+            sources.append(Path(result["path"]))
+        assert len(layouts) == len(STYLES)
+
         if typst := shutil.which("typst"):
-            for source in [path, Path(grouped["path"])]:
+            pdftotext = shutil.which("pdftotext")
+            for source in sources:
                 compiled = temp / f"{source.stem}.pdf"
-                subprocess.run([typst, "compile", str(source), str(compiled)], check=True, timeout=20)
+                result = subprocess.run(
+                    [typst, "compile", "--ignore-system-fonts", str(source), str(compiled)],
+                    timeout=20, capture_output=True, text=True
+                )
+                assert result.returncode == 0, result.stderr
                 assert compiled.read_bytes().startswith(b"%PDF")
+                if pdftotext:
+                    document = subprocess.check_output([pdftotext, str(compiled), "-"], text=True, timeout=10)
+                    text = " ".join(document.split())
+                    assert "Alex Example" in text and "with 3 engineers" in text
         else:
             print("Typst executable unavailable. Skipped compiling the generated test CV.")
 

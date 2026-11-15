@@ -221,24 +221,77 @@ enum CVLayout {
         return address.url?.absoluteString
     }
 
+    private struct Style {
+        // These are Typst expressions. Both sans profiles end with a bundled fallback.
+        static let sans = #"("Helvetica Neue", "Arial", "Libertinus Serif")"#
+
+        let bodyFont: String
+        let ink: String
+        let accent: String
+        let muted: String
+        let rule: String
+        let headlineSize: String
+        let nameTracking: String
+        var headerAlign = "left"
+        var headerRule = "100%"
+        var headerStroke = "1.1pt + accent"
+        var titlePrefix = ""
+        var titleColor = ""
+        var bodySize = "11.2pt"
+        var sectionAbove = "16pt"
+        var sectionBelow = "8pt"
+        var sectionText = #"13pt, weight: "semibold""#
+        var sectionBody = "#heading(level: 1, body)\n  #v(4pt)\n  #line(length: 100%, stroke: 0.45pt + rule)"
+        var roleText = #"11.4pt, weight: "bold""#
+        var metadataText = "10pt"
+
+        static func forTemplate(_ template: CVTemplate) -> Style {
+            switch template {
+            case .editorial:
+                Style(bodyFont: #""Libertinus Serif""#, ink: "162636", accent: "14495D",
+                      muted: "485866", rule: "C7D5DB", headlineSize: "33pt", nameTracking: "-0.7pt",
+                      headerRule: "42mm")
+            case .classic:
+                Style(bodyFont: #""New Computer Modern""#, ink: "1B1B1B", accent: "292929",
+                      muted: "4C4C4C", rule: "C8C8C8", headlineSize: "27pt", nameTracking: "-0.2pt",
+                      headerAlign: "center")
+            case .minimal:
+                Style(bodyFont: sans, ink: "20272E", accent: "353D45",
+                      muted: "5C646C", rule: "C8CED2", headlineSize: "28pt", nameTracking: "-0.4pt",
+                      headerStroke: "0.6pt + rule", bodySize: "10.8pt", sectionAbove: "12pt",
+                      sectionBelow: "5pt", sectionText: #"11.5pt, weight: "bold", tracking: 0.25pt"#,
+                      sectionBody: "#heading(level: 1, body)")
+            case .executive:
+                Style(bodyFont: #""Libertinus Serif""#, ink: "202D3A", accent: "203656",
+                      muted: "425770", rule: "BAC4D0", headlineSize: "36pt", nameTracking: "-0.25pt",
+                      headerStroke: "0.6pt + rule",
+                      titlePrefix: "#line(length: 100%, stroke: 2.5pt + accent)\n  #v(9pt)\n  ",
+                      titleColor: "fill: accent, ", sectionAbove: "18pt",
+                      sectionText: #"13pt, weight: "semibold", tracking: 0.45pt"#,
+                      roleText: #"12pt, weight: "bold", fill: accent"#)
+            case .technical:
+                Style(bodyFont: sans, ink: "1C2B37", accent: "225572",
+                      muted: "4F6472", rule: "B6CDD8", headlineSize: "30pt", nameTracking: "-0.45pt",
+                      headerRule: "32mm", bodySize: "10.8pt", sectionAbove: "14pt", sectionBelow: "7pt",
+                      sectionText: #"11pt, font: "DejaVu Sans Mono", weight: "bold", tracking: 0.25pt"#,
+                      sectionBody: """
+                      #block(width: 100%, fill: rgb("EDF5F8"), inset: (left: 8pt, y: 4pt),
+                        stroke: (left: 1.6pt + accent))[#heading(level: 1, body)]
+                      """,
+                      metadataText: #"9.2pt, font: "DejaVu Sans Mono""#)
+            }
+        }
+    }
+
     private static func preamble(template: CVTemplate, language: CVLanguage, paper: CVPaper) -> String {
-        let editorial = template == .editorial
-        let bodyFont = editorial ? "Libertinus Serif" : "New Computer Modern"
-        let ink = editorial ? "162636" : "1B1B1B"
-        let accent = editorial ? "14495D" : "292929"
-        let muted = editorial ? "485866" : "4C4C4C"
-        let rule = editorial ? "C7D5DB" : "C8C8C8"
-        let headlineSize = editorial ? "33pt" : "27pt"
-        let nameTracking = editorial ? "-0.7pt" : "-0.2pt"
-        let headerAlign = editorial ? "left" : "center"
-        let headerRule = editorial ? "42mm" : "100%"
+        let style = Style.forTemplate(template)
         let paperName = paper == .a4 ? "a4" : "us-letter"
         return #"""
         // CV Vault · \#(template.rawValue) · editable, standalone Typst document
-        #let accent = rgb("\#(accent)")
-        #let muted = rgb("\#(muted)")
-        #let rule = rgb("\#(rule)")
-        #let header-align = \#(headerAlign)
+        #let accent = rgb("\#(style.accent)")
+        #let muted = rgb("\#(style.muted)")
+        #let rule = rgb("\#(style.rule)")
+        #let header-align = \#(style.headerAlign)
 
         #set page(
           paper: "\#(paperName)",
@@ -248,19 +301,19 @@ enum CVLayout {
           },
         )
         #set text(
-          font: "\#(bodyFont)", lang: "\#(language.rawValue)", size: 11.2pt,
-          fill: rgb("\#(ink)"), hyphenate: false, top-edge: "ascender", bottom-edge: "descender",
+          font: \#(style.bodyFont), lang: "\#(language.rawValue)", size: \#(style.bodySize),
+          fill: rgb("\#(style.ink)"), hyphenate: false, top-edge: "ascender", bottom-edge: "descender",
         )
         #set par(leading: 0.55em, spacing: 0.82em)
         #set list(indent: 1pt, body-indent: 5pt, spacing: 4pt, marker: [•])
         #set heading(numbering: none)
-        #show heading.where(level: 1): set text(13pt, weight: "semibold", fill: accent)
+        #show heading.where(level: 1): set text(\#(style.sectionText), fill: accent)
         #show heading.where(level: 1): set block(above: 0pt, below: 0pt)
-        #show heading.where(level: 2): set text(11.4pt, weight: "bold")
+        #show heading.where(level: 2): set text(\#(style.roleText))
         #show heading.where(level: 2): set block(above: 0pt, below: 0pt)
 
         #let cv-title(body) = block(width: 100%, inset: (bottom: 4pt), below: 6pt, sticky: true)[
-          #align(header-align, text(\#(headlineSize), tracking: \#(nameTracking), weight: "bold", body))
+          \#(style.titlePrefix)#align(header-align, text(\#(style.headlineSize), tracking: \#(style.nameTracking), weight: "bold", \#(style.titleColor)body))
         ]
         #let cv-subtitle(body) = block(width: 100%, below: 7pt, sticky: true)[
           #align(header-align, text(13pt, weight: "semibold", fill: accent, body))
@@ -271,12 +324,10 @@ enum CVLayout {
           }).join(text("  ·  "))))
         ]
         #let cv-header-rule() = block(width: 100%, above: 8pt, below: 9pt)[
-          #align(header-align, line(length: \#(headerRule), stroke: 1.1pt + accent))
+          #align(header-align, line(length: \#(style.headerRule), stroke: \#(style.headerStroke)))
         ]
-        #let cv-section(body) = block(width: 100%, above: 16pt, below: 8pt, sticky: true)[
-          #heading(level: 1, body)
-          #v(4pt)
-          #line(length: 100%, stroke: 0.45pt + rule)
+        #let cv-section(body) = block(width: 100%, above: \#(style.sectionAbove), below: \#(style.sectionBelow), sticky: true)[
+          \#(style.sectionBody)
         ]
         #let cv-detail(body) = block(above: 0pt, below: 5pt, text(body))
         #let cv-entry(title, metadata, bullets) = {
@@ -284,7 +335,7 @@ enum CVLayout {
             #heading(level: 2, title)
             #if metadata.len() > 0 [
               #v(3pt)
-              #block(text(10pt, fill: muted, metadata.join("  ·  ")))
+              #block(text(\#(style.metadataText), fill: muted, metadata.join("  ·  ")))
             ]
           ]
           if bullets.len() > 0 {
